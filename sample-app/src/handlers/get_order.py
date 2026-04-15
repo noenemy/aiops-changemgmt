@@ -25,16 +25,17 @@ def handler(event, context):
                 "body": json.dumps({"error": MESSAGES["order_not_found"]}),
             }
 
+        # Refactored: snake_case 통일, 불필요 필드 제거
         return {
             "statusCode": 200,
             "headers": {"Content-Type": "application/json"},
             "body": json.dumps({
-                "orderId": order["orderId"],
-                "order_status": order["status"],
-                "totalPrice": order["totalPrice"],
+                "id": order["orderId"],
+                "status": order["status"],
+                "total_price": order["totalPrice"],
                 "created_at": order["createdAt"],
-                "orderItems": order.get("items", []),
-                "userId": order["userId"],
+                "items": order.get("items", []),
+                # userId 제거 — 프론트에서 사용하지 않음
             }, default=str),
         }
     except Exception as e:
