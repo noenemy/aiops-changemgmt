@@ -15,49 +15,47 @@ inventory_table = dynamodb.Table(os.environ["INVENTORY_TABLE"])
 
 
 def handler(event, context):
-    try:
-        body = json.loads(event["body"])
-        product_id = body["product_id"]
-        quantity = body["quantity"]
-        user_id = body["user_id"]
-    except (json.JSONDecodeError, KeyError) as e:
-        return {
-            "statusCode": 400,
-            "body": json.dumps({"error": "Invalid request body"}),
-        }
+    body = json.loads(event["body"])
+    product_id = body["product_id"]
+    quantity = body["quantity"]
+    user_id = body["user_id"]
 
     logger.info(f"Creating order for user {user_id}, product {product_id}")
 
-    try:
-        # Atomic inventory decrement with condition
-        inventory_table.update_item(
-            Key={"productId": product_id},
-            UpdateExpression="SET stockCount = stockCount - :qty",
-            ConditionExpression="stockCount >= :qty",
-            ExpressionAttributeValues={":qty": quantity},
-        )
-    except dynamodb.meta.client.exceptions.ConditionalCheckFailedException:
-        return {
-            "statusCode": 400,
-            "body": json.dumps({"error": "Insufficient stock"}),
-        }
+    # Step 1: 재고 확인
+    inventory = inventory_table.get_item(Key={"productId": product_id})["Item"]
+    available = inventory["stockCount"]
 
+    if available < quantity:
+        return {"statusCode": 400, "body": "재고가 부족합니다"}
+
+    # Step 2: 재고 차감
+    inventory_table.update_item(
+        Key={"productId": product_id},
+        UpdateExpression="SET stockCount = stockCount - :qty",
+        ExpressionAttributeValues={":qty": quantity},
+    )
+
+    # Step 3: 주문 생성
     order_id = str(uuid.uuid4())
-    order = {
+    orders_table.put_item(Item={
         "orderId": order_id,
         "userId": user_id,
         "productId": product_id,
         "quantity": quantity,
         "status": "CONFIRMED",
-        "totalPrice": quantity * 29900,
+        "totalPrice": inventory["price"] * quantity,
         "createdAt": datetime.now().isoformat(),
-    }
+    })
 
-    orders_table.put_item(Item=order)
-    logger.info(f"Order created: {order_id}")
+    # Step 4: 결제 처리
+    payment_result = process_payment(user_id, inventory["price"] * quantity)
 
-    return {
-        "statusCode": 201,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps({"orderId": order_id}),
-    }
+    return {"statusCode": 201, "body": json.dumps({"orderId": order_id})}
+
+
+def process_payment(user_id, amount):
+    """Process payment via external service."""
+    logger.info(f"Processing payment: user={user_id}, amount={amount}")
+    # TODO: 외부 결제 API 연동
+    return {"status": "success"}
