@@ -1,4 +1,4 @@
-# aiops-changemgmt
+# AIOps Change Management Demo
 
 AI 기반 변경 관리 데모 — 코드 및 인프라 변경이 프로덕션에 배포되기 전에 리스크를 자동으로 감지하고 장애를 예방합니다.
 
