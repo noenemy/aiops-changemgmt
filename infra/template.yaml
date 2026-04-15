@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  AIOps Change Management — Bedrock AgentCore Infrastructure
-  GitHub Webhook → Lambda → Bedrock Agent (Memory + KB) → GitHub Comment + Slack Report
+  AIOps Change Management — Phase 1: Webhook Pipeline + Bedrock Direct
+  GitHub Webhook → Lambda → Bedrock Claude → GitHub Comment + Slack Report
 
 Parameters:
   GitHubToken:
@@ -27,8 +27,8 @@ Parameters:
     Description: Slack channel ID to post reports
   BedrockModelId:
     Type: String
-    Default: anthropic.claude-sonnet-4-6
-    Description: Foundation model for the Agent
+    Default: global.anthropic.claude-sonnet-4-6
+    Description: Bedrock model / inference profile ID
 
 Resources:
   # ============================================================
@@ -47,7 +47,7 @@ Resources:
       SecretString: !Ref SlackBotToken
 
   # ============================================================
-  # S3 — Knowledge Base data source
+  # S3 — Knowledge Base data (Phase 2에서 KB 연동)
   # ============================================================
   KBDataBucket:
     Type: AWS::S3::Bucket
@@ -57,214 +57,7 @@ Resources:
         Status: Enabled
 
   # ============================================================
-  # Bedrock AgentCore — Agent Role
-  # ============================================================
-  AgentRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${AWS::StackName}-agent-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: bedrock.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: BedrockAgentPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - bedrock:InvokeModel
-                Resource: !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}
-              - Effect: Allow
-                Action:
-                  - bedrock:Retrieve
-                  - bedrock:RetrieveAndGenerate
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:ListBucket
-                Resource:
-                  - !GetAtt KBDataBucket.Arn
-                  - !Sub ${KBDataBucket.Arn}/*
-
-  # ============================================================
-  # Bedrock AgentCore — Knowledge Base
-  # ============================================================
-  KBRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${AWS::StackName}-kb-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: bedrock.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: KBPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - bedrock:InvokeModel
-                Resource: !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:ListBucket
-                Resource:
-                  - !GetAtt KBDataBucket.Arn
-                  - !Sub ${KBDataBucket.Arn}/*
-              - Effect: Allow
-                Action:
-                  - aoss:APIAccessAll
-                Resource: "*"
-
-  # OpenSearch Serverless collection for KB vector store
-  OSSCollection:
-    Type: AWS::OpenSearchServerless::Collection
-    DependsOn:
-      - OSSEncryptionPolicy
-      - OSSNetworkPolicy
-      - OSSDataAccessPolicy
-    Properties:
-      Name: !Sub ${AWS::StackName}-kb
-      Type: VECTORSEARCH
-
-  OSSEncryptionPolicy:
-    Type: AWS::OpenSearchServerless::SecurityPolicy
-    Properties:
-      Name: !Sub ${AWS::StackName}-kb-enc
-      Type: encryption
-      Policy: !Sub >-
-        {"Rules":[{"ResourceType":"collection","Resource":["collection/${AWS::StackName}-kb"]}],"AWSOwnedKey":true}
-
-  OSSNetworkPolicy:
-    Type: AWS::OpenSearchServerless::SecurityPolicy
-    Properties:
-      Name: !Sub ${AWS::StackName}-kb-net
-      Type: network
-      Policy: !Sub >-
-        [{"Rules":[{"ResourceType":"collection","Resource":["collection/${AWS::StackName}-kb"]},{"ResourceType":"dashboard","Resource":["collection/${AWS::StackName}-kb"]}],"AllowFromPublic":true}]
-
-  OSSDataAccessPolicy:
-    Type: AWS::OpenSearchServerless::AccessPolicy
-    Properties:
-      Name: !Sub ${AWS::StackName}-kb-access
-      Type: data
-      Policy: !Sub >-
-        [{"Rules":[{"ResourceType":"collection","Resource":["collection/${AWS::StackName}-kb"],"Permission":["aoss:*"]},{"ResourceType":"index","Resource":["index/${AWS::StackName}-kb/*"],"Permission":["aoss:*"]}],"Principal":["${KBRole.Arn}","${AgentRole.Arn}"]}]
-
-  # Knowledge Base
-  IncidentKnowledgeBase:
-    Type: AWS::Bedrock::KnowledgeBase
-    DependsOn: OSSCollection
-    Properties:
-      Name: !Sub ${AWS::StackName}-incident-kb
-      Description: 과거 장애 이력, 배포 히스토리, 코드 리뷰 패턴 데이터
-      RoleArn: !GetAtt KBRole.Arn
-      KnowledgeBaseConfiguration:
-        Type: VECTOR
-        VectorKnowledgeBaseConfiguration:
-          EmbeddingModelArn: !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0
-      StorageConfiguration:
-        Type: OPENSEARCH_SERVERLESS
-        OpensearchServerlessConfiguration:
-          CollectionArn: !GetAtt OSSCollection.Arn
-          VectorIndexName: incident-index
-          FieldMapping:
-            VectorField: embedding
-            TextField: text
-            MetadataField: metadata
-
-  # KB Data Source (S3)
-  KBDataSource:
-    Type: AWS::Bedrock::DataSource
-    Properties:
-      KnowledgeBaseId: !Ref IncidentKnowledgeBase
-      Name: incident-data
-      DataSourceConfiguration:
-        Type: S3
-        S3Configuration:
-          BucketArn: !GetAtt KBDataBucket.Arn
-
-  # ============================================================
-  # Bedrock AgentCore — Agent (Runtime + Memory + Gateway)
-  # ============================================================
-  CodeReviewAgent:
-    Type: AWS::Bedrock::Agent
-    Properties:
-      AgentName: !Sub ${AWS::StackName}-code-reviewer
-      Description: AI 코드 리뷰 에이전트 — PR 분석, 리스크 판정, 과거 장애 연관 분석
-      AgentResourceRoleArn: !GetAtt AgentRole.Arn
-      FoundationModel: !Ref BedrockModelId
-      IdleSessionTTLInSeconds: 900
-      Instruction: !Sub |
-        당신은 시니어 소프트웨어 엔지니어이자 보안/성능 전문 코드 리뷰어입니다.
-        GitHub Pull Request의 변경 내용을 분석하고, 리스크를 평가합니다.
-
-        ## 분석 기준
-        1. 보안: 시크릿 노출, Injection, PII 로깅, 인증/인가 우회
-        2. 성능: N+1 쿼리, 페이지네이션 부재, 타임아웃 위험
-        3. 안정성: Race Condition, 보상 트랜잭션 부재, 에러 핸들링 누락
-        4. 호환성: Breaking API Change, 하위 호환성 파괴
-
-        ## 과거 장애 연관 분석
-        Knowledge Base에서 과거 장애 이력을 검색하여,
-        현재 PR의 변경이 과거에 발생했던 장애 패턴과 유사한지 분석합니다.
-        유사 장애가 있다면 반드시 언급하고, 당시 영향도(다운타임, 매출 손실)를 포함합니다.
-
-        ## 응답 형식
-        반드시 아래 JSON 형식으로 응답하세요:
-        {
-          "risk_score": <0-100>,
-          "risk_level": "<LOW|MEDIUM|HIGH|CRITICAL>",
-          "verdict": "<APPROVE|REJECT>",
-          "summary": "<한국어 요약>",
-          "issues": [
-            {
-              "severity": "<critical|high|medium|low>",
-              "title": "<이슈 제목>",
-              "location": "<파일:라인>",
-              "description": "<설명>",
-              "impact": "<영향도>",
-              "fix": "<수정 제안>"
-            }
-          ],
-          "past_incident_match": "<유사 장애 설명 또는 null>"
-        }
-      MemoryConfiguration:
-        EnabledMemoryTypes:
-          - SESSION_SUMMARY
-        StorageDays: 365
-
-  # Associate KB with Agent
-  AgentKBAssociation:
-    Type: AWS::Bedrock::AgentKnowledgeBaseAssociation
-    Properties:
-      AgentId: !Ref CodeReviewAgent
-      AgentVersion: DRAFT
-      KnowledgeBaseId: !Ref IncidentKnowledgeBase
-      Description: 과거 장애 이력 및 배포 히스토리 참조
-      KnowledgeBaseState: ENABLED
-
-  # Agent Alias (deploy)
-  AgentAlias:
-    Type: AWS::Bedrock::AgentAlias
-    DependsOn: AgentKBAssociation
-    Properties:
-      AgentId: !Ref CodeReviewAgent
-      AgentAliasName: prod
-
-  # ============================================================
-  # Webhook Pipeline — API Gateway + Lambda
+  # Webhook API Gateway
   # ============================================================
   WebhookApi:
     Type: AWS::Serverless::Api
@@ -272,12 +65,15 @@ Resources:
       StageName: prod
       Description: GitHub Webhook receiver
 
+  # ============================================================
+  # Webhook Receiver Lambda
+  # ============================================================
   WebhookFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub ${AWS::StackName}-webhook
       Handler: webhook_handler.handler
-      Runtime: python3.12
+      Runtime: python3.13
       CodeUri: webhook/
       MemorySize: 256
       Timeout: 30
@@ -296,12 +92,15 @@ Resources:
         - LambdaInvokePolicy:
             FunctionName: !Ref AnalysisFunction
 
+  # ============================================================
+  # Analysis Lambda (Bedrock direct call, Agent fallback ready)
+  # ============================================================
   AnalysisFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub ${AWS::StackName}-analysis
       Handler: analysis_handler.handler
-      Runtime: python3.12
+      Runtime: python3.13
       CodeUri: webhook/
       MemorySize: 1024
       Timeout: 300
@@ -311,8 +110,8 @@ Resources:
           SLACK_TOKEN_SECRET_ARN: !Ref SlackBotTokenSecret
           SLACK_CHANNEL_ID: !Ref SlackChannelId
           GITHUB_REPO: !Ref GitHubRepo
-          BEDROCK_AGENT_ID: !Ref CodeReviewAgent
-          BEDROCK_AGENT_ALIAS_ID: !GetAtt AgentAlias.AgentAliasId
+          BEDROCK_AGENT_ID: "none"
+          BEDROCK_AGENT_ALIAS_ID: "none"
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           REVIEW_HISTORY_TABLE: !Ref ReviewHistoryTable
       Policies:
@@ -326,14 +125,15 @@ Resources:
                 - !Ref SlackBotTokenSecret
             - Effect: Allow
               Action:
-                - bedrock:InvokeAgent
                 - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+                - bedrock:InvokeAgent
               Resource: "*"
         - DynamoDBCrudPolicy:
             TableName: !Ref ReviewHistoryTable
 
   # ============================================================
-  # Review History Table (supplements Agent Memory)
+  # Review History Table
   # ============================================================
   ReviewHistoryTable:
     Type: AWS::DynamoDB::Table
@@ -356,17 +156,11 @@ Outputs:
     Description: GitHub Webhook URL — set this in repo Settings > Webhooks
     Value: !Sub https://${WebhookApi}.execute-api.${AWS::Region}.amazonaws.com/prod/webhook
   KBDataBucketName:
-    Description: S3 bucket for KB data — upload incident/deploy history here
+    Description: S3 bucket for KB data (Phase 2)
     Value: !Ref KBDataBucket
-  AgentId:
-    Description: Bedrock Agent ID
-    Value: !Ref CodeReviewAgent
-  AgentAliasId:
-    Description: Bedrock Agent Alias ID (prod)
-    Value: !GetAtt AgentAlias.AgentAliasId
-  KnowledgeBaseId:
-    Description: Bedrock Knowledge Base ID
-    Value: !Ref IncidentKnowledgeBase
   ReviewHistoryTableName:
     Description: Review history DynamoDB table
     Value: !Ref ReviewHistoryTable
+  AnalysisFunctionName:
+    Description: Analysis Lambda function name
+    Value: !Ref AnalysisFunction
