@@ -1,0 +1,166 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: "AIOps Change Management \u2014 Phase 1: Webhook Pipeline + Bedrock Direct\
+  \ GitHub Webhook \u2192 Lambda \u2192 Bedrock Claude \u2192 GitHub Comment + Slack\
+  \ Report\n"
+Parameters:
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Description: GitHub Personal Access Token (repo scope)
+  GitHubRepo:
+    Type: String
+    Default: noenemy/aiops-changemgmt
+    Description: GitHub repository (owner/repo)
+  GitHubWebhookSecret:
+    Type: String
+    NoEcho: true
+    Default: changeme-webhook-secret
+    Description: GitHub Webhook secret for signature verification
+  SlackBotToken:
+    Type: String
+    NoEcho: true
+    Description: Slack Bot User OAuth Token
+  SlackChannelId:
+    Type: String
+    Description: Slack channel ID to post reports
+  BedrockModelId:
+    Type: String
+    Default: global.anthropic.claude-sonnet-4-6
+    Description: Bedrock model / inference profile ID
+Resources:
+  GitHubTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}/github-token
+      SecretString:
+        Ref: GitHubToken
+  SlackBotTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}/slack-bot-token
+      SecretString:
+        Ref: SlackBotToken
+  KBDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: ${AWS::StackName}-kb-data-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+  WebhookApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Description: GitHub Webhook receiver
+  WebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-webhook
+      Handler: webhook_handler.handler
+      Runtime: python3.13
+      CodeUri: WebhookFunction
+      MemorySize: 256
+      Timeout: 30
+      Environment:
+        Variables:
+          ANALYSIS_FUNCTION_NAME:
+            Ref: AnalysisFunction
+          GITHUB_WEBHOOK_SECRET:
+            Ref: GitHubWebhookSecret
+      Events:
+        Webhook:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: WebhookApi
+            Path: /webhook
+            Method: post
+      Policies:
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: AnalysisFunction
+    Metadata:
+      SamResourceId: WebhookFunction
+  AnalysisFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-analysis
+      Handler: analysis_handler.handler
+      Runtime: python3.13
+      CodeUri: AnalysisFunction
+      MemorySize: 1024
+      Timeout: 300
+      Environment:
+        Variables:
+          GITHUB_TOKEN_SECRET_ARN:
+            Ref: GitHubTokenSecret
+          SLACK_TOKEN_SECRET_ARN:
+            Ref: SlackBotTokenSecret
+          SLACK_CHANNEL_ID:
+            Ref: SlackChannelId
+          GITHUB_REPO:
+            Ref: GitHubRepo
+          BEDROCK_AGENT_ID: none
+          BEDROCK_AGENT_ALIAS_ID: none
+          BEDROCK_MODEL_ID:
+            Ref: BedrockModelId
+          REVIEW_HISTORY_TABLE:
+            Ref: ReviewHistoryTable
+      Policies:
+      - Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - secretsmanager:GetSecretValue
+          Resource:
+          - Ref: GitHubTokenSecret
+          - Ref: SlackBotTokenSecret
+        - Effect: Allow
+          Action:
+          - bedrock:InvokeModel
+          - bedrock:InvokeModelWithResponseStream
+          - bedrock:InvokeAgent
+          Resource: '*'
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: ReviewHistoryTable
+    Metadata:
+      SamResourceId: AnalysisFunction
+  ReviewHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: ${AWS::StackName}-review-history
+      AttributeDefinitions:
+      - AttributeName: prKey
+        AttributeType: S
+      - AttributeName: reviewedAt
+        AttributeType: S
+      KeySchema:
+      - AttributeName: prKey
+        KeyType: HASH
+      - AttributeName: reviewedAt
+        KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+Outputs:
+  WebhookUrl:
+    Description: "GitHub Webhook URL \u2014 set this in repo Settings > Webhooks"
+    Value:
+      Fn::Sub: https://${WebhookApi}.execute-api.${AWS::Region}.amazonaws.com/prod/webhook
+  KBDataBucketName:
+    Description: S3 bucket for KB data (Phase 2)
+    Value:
+      Ref: KBDataBucket
+  ReviewHistoryTableName:
+    Description: Review history DynamoDB table
+    Value:
+      Ref: ReviewHistoryTable
+  AnalysisFunctionName:
+    Description: Analysis Lambda function name
+    Value:
+      Ref: AnalysisFunction
