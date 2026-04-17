@@ -1,26 +1,32 @@
-# SAM build artifacts
-.aws-sam/
+# AWS SAM build artifacts
+**/.aws-sam/
 samconfig.toml
 
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
 
-# IDE
-.idea/
-.vscode/
-*.swp
+# Node / Next.js
+**/node_modules/
+**/.next/
+**/out/
+.npm
+.yarn/cache
 
-# OS
+# OS / IDE
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
+*.swp
 
-# Environment
+# Env / secrets
 .env
+.env.local
 *.local
-
-# Node (if any)
-node_modules/
+*.pem
