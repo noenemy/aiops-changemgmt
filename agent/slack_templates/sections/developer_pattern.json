@@ -1,0 +1,4 @@
+{
+  "type": "section",
+  "text": { "type": "mrkdwn", "text": "👤 *개발자 패턴:*\n{{developer_pattern}}" }
+}

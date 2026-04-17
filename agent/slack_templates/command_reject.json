@@ -1,0 +1,21 @@
+{
+  "blocks": [
+    {
+      "type": "header",
+      "text": { "type": "plain_text", "text": "🚫 수동 REJECT — PR #{{pr_number}}" }
+    },
+    {
+      "type": "section",
+      "fields": [
+        { "type": "mrkdwn", "text": "*PR:* <{{pr_url}}|{{pr_title}}>" },
+        { "type": "mrkdwn", "text": "*Rejected by:* {{actor}}" }
+      ]
+    },
+    {
+      "type": "section",
+      "text": { "type": "mrkdwn", "text": "*사유:*\n{{reason}}" }
+    },
+    { "type": "divider" },
+    {{>sections/footer}}
+  ]
+}

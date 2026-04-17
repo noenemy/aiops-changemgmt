@@ -1,0 +1,4 @@
+{
+  "type": "section",
+  "text": { "type": "mrkdwn", "text": "*요약:*\n{{summary}}" }
+}

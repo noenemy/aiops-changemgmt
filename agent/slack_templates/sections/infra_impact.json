@@ -1,0 +1,4 @@
+{
+  "type": "section",
+  "text": { "type": "mrkdwn", "text": "🔧 *인프라 영향:*\n{{infra_impact}}" }
+}

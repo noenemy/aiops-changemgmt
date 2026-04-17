@@ -2,153 +2,41 @@
   "openapi": "3.0.0",
   "info": {
     "title": "AIOps ChangeManagement Tools",
-    "version": "1.0.0",
-    "description": "GitHub and Slack tools for the code review agent"
+    "version": "2.0.0",
+    "description": "Tools exposed to the Bedrock Agent (mirror of FunctionSchema in agent-template.yaml)"
   },
   "paths": {
-    "/get_pr_diff": {
-      "get": {
-        "operationId": "get_pr_diff",
-        "summary": "Fetch the diff of a GitHub Pull Request",
-        "description": "Returns the unified diff content of the specified PR. Use this to analyze code changes.",
-        "parameters": [
-          {
-            "name": "pr_number",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "integer" },
-            "description": "The PR number to fetch diff for"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "PR diff content",
-            "content": { "text/plain": { "schema": { "type": "string" } } }
-          }
-        }
-      }
-    },
-    "/get_pr_files": {
-      "get": {
-        "operationId": "get_pr_files",
-        "summary": "Get list of files changed in a PR",
-        "description": "Returns JSON array of changed files with additions/deletions counts.",
-        "parameters": [
-          {
-            "name": "pr_number",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "integer" },
-            "description": "The PR number"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "List of changed files",
-            "content": { "application/json": { "schema": { "type": "string" } } }
-          }
-        }
-      }
-    },
-    "/post_github_comment": {
-      "post": {
-        "operationId": "post_github_comment",
-        "summary": "Post a review comment on a GitHub PR",
-        "description": "Posts a markdown comment on the specified PR. Use this to deliver the analysis result.",
-        "parameters": [
-          {
-            "name": "pr_number",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "integer" },
-            "description": "The PR number to comment on"
-          },
-          {
-            "name": "comment_body",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Markdown formatted comment body with risk score, issues, and verdict"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Comment posted confirmation",
-            "content": { "text/plain": { "schema": { "type": "string" } } }
-          }
-        }
-      }
-    },
-    "/post_slack_report": {
-      "post": {
-        "operationId": "post_slack_report",
-        "summary": "Post analysis report to Slack channel",
-        "description": "Sends a formatted report to the configured Slack channel.",
-        "parameters": [
-          {
-            "name": "pr_number",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "integer" },
-            "description": "PR number"
-          },
-          {
-            "name": "pr_title",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "PR title"
-          },
-          {
-            "name": "pr_author",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "PR author username"
-          },
-          {
-            "name": "risk_score",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "integer" },
-            "description": "Risk score 0-100"
-          },
-          {
-            "name": "risk_level",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
-            "description": "Risk level"
-          },
-          {
-            "name": "verdict",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string", "enum": ["APPROVE", "REJECT"] },
-            "description": "APPROVE or REJECT"
-          },
-          {
-            "name": "summary",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Korean summary of the analysis in 1-2 sentences"
-          },
-          {
-            "name": "issues_text",
-            "in": "query",
-            "required": false,
-            "schema": { "type": "string" },
-            "description": "Formatted text of discovered issues"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Slack report posted confirmation",
-            "content": { "text/plain": { "schema": { "type": "string" } } }
-          }
-        }
-      }
-    }
+    "/get_pr_diff":                { "get":  { "operationId": "get_pr_diff",                "parameters": [{"name":"pr_number","in":"query","required":true,"schema":{"type":"integer"}}] } },
+    "/get_pr_files":               { "get":  { "operationId": "get_pr_files",               "parameters": [{"name":"pr_number","in":"query","required":true,"schema":{"type":"integer"}}] } },
+    "/detect_change_type":         { "get":  { "operationId": "detect_change_type",         "parameters": [{"name":"pr_number","in":"query","required":true,"schema":{"type":"integer"}}] } },
+    "/get_review_history":         { "get":  { "operationId": "get_review_history",         "parameters": [
+      {"name":"author","in":"query","required":false,"schema":{"type":"string"}},
+      {"name":"files","in":"query","required":false,"schema":{"type":"string"}},
+      {"name":"limit","in":"query","required":false,"schema":{"type":"integer"}}
+    ] } },
+    "/get_developer_profile":      { "get":  { "operationId": "get_developer_profile",      "parameters": [{"name":"author","in":"query","required":true,"schema":{"type":"string"}}] } },
+    "/get_team_stats":             { "get":  { "operationId": "get_team_stats",             "parameters": [
+      {"name":"team_id","in":"query","required":true,"schema":{"type":"string"}},
+      {"name":"period","in":"query","required":false,"schema":{"type":"string"}}
+    ] } },
+    "/invoke_devops_agent":        { "post": { "operationId": "invoke_devops_agent",        "parameters": [
+      {"name":"query","in":"query","required":true,"schema":{"type":"string"}},
+      {"name":"context","in":"query","required":false,"schema":{"type":"string"}}
+    ] } },
+    "/invoke_security_agent":      { "post": { "operationId": "invoke_security_agent",      "parameters": [
+      {"name":"query","in":"query","required":true,"schema":{"type":"string"}},
+      {"name":"context","in":"query","required":false,"schema":{"type":"string"}}
+    ] } },
+    "/post_github_comment":        { "post": { "operationId": "post_github_comment",        "parameters": [
+      {"name":"pr_number","in":"query","required":true,"schema":{"type":"integer"}},
+      {"name":"comment_body","in":"query","required":true,"schema":{"type":"string"}}
+    ] } },
+    "/post_github_fix_suggestion": { "post": { "operationId": "post_github_fix_suggestion", "parameters": [
+      {"name":"pr_number","in":"query","required":true,"schema":{"type":"integer"}},
+      {"name":"suggestion_markdown","in":"query","required":true,"schema":{"type":"string"}}
+    ] } },
+    "/post_slack_report":          { "post": { "operationId": "post_slack_report",          "parameters": [
+      {"name":"report_json","in":"query","required":true,"schema":{"type":"string"}}
+    ] } }
   }
 }

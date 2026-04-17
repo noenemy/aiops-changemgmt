@@ -1,0 +1,6 @@
+{
+  "type": "context",
+  "elements": [
+    { "type": "mrkdwn", "text": "🤖 {{agent_persona}} · Bedrock AgentCore · {{timestamp}}" }
+  ]
+}
