@@ -1,3 +1,9 @@
+---
+doc_type: runbook
+topic: dynamodb-best-practices
+keywords: [dynamodb, scan, pagination, n-plus-1, optimistic-locking, condition-expression, gsi]
+---
+
 # DynamoDB 사용 가이드라인
 
 ## 필수 규칙

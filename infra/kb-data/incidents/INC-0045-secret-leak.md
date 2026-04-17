@@ -1,3 +1,12 @@
+---
+doc_type: incident
+incident_id: INC-0045
+date: 2026-02-08
+severity: P1
+affected_files: [process_payment.py]
+keywords: [secret-leak, hardcoded-credential, pci-dss, logging, card-token, sk_live, api-key, 시크릿]
+---
+
 # 장애 보고서: INC-0045
 
 ## 개요

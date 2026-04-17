@@ -1,3 +1,12 @@
+---
+doc_type: incident
+incident_id: INC-0038
+date: 2025-11-22
+severity: P2
+affected_files: [get_order.py]
+keywords: [breaking-change, api, mobile, backward-compatibility, field-rename, orderId, 필드명]
+---
+
 # 장애 보고서: INC-0038
 
 ## 개요

@@ -1,3 +1,9 @@
+---
+doc_type: runbook
+topic: api-change-policy
+keywords: [api, breaking-change, versioning, backward-compatibility, deprecation, 호환성]
+---
+
 # API 변경 정책
 
 ## 공개 API 필드 변경 규칙

@@ -1,3 +1,12 @@
+---
+doc_type: incident
+incident_id: INC-0042
+date: 2026-01-15
+severity: P1
+affected_files: [create_order.py]
+keywords: [race-condition, toctou, dynamodb, inventory, overselling, 재고, get_item, update_item]
+---
+
 # 장애 보고서: INC-0042
 
 ## 개요

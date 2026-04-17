@@ -1,3 +1,12 @@
+---
+doc_type: incident
+incident_id: INC-0041
+date: 2025-12-20
+severity: P1
+affected_files: [list_orders.py]
+keywords: [n-plus-1, dynamodb, throttling, scan, pagination, performance, for-loop, get_item]
+---
+
 # 장애 보고서: INC-0041
 
 ## 개요
