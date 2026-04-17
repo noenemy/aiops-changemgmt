@@ -1,176 +1,122 @@
-# 전체 동작 플로우
+# E2E 플로우 (v2)
 
-## E2E 플로우 (시간순)
-
-```
-[T+0.0s]  개발자가 PR 생성
-          $ ./demo.sh run h4
-          → GitHub API: POST /repos/noenemy/aiops-changemgmt/pulls
-          
-[T+0.1s]  GitHub이 Webhook 발송
-          → POST https://xrbg55j765.execute-api.ap-northeast-2.amazonaws.com/prod/webhook
-          → Headers: X-GitHub-Event: pull_request, X-Hub-Signature-256: sha256=...
-          → Body: { action: "opened", pull_request: {...}, repository: {...} }
-
-[T+0.3s]  API Gateway → Webhook Lambda (aiops-changemgmt-infra-webhook)
-          • X-Hub-Signature-256 검증 (HMAC-SHA256, secret: aiops-demo-webhook-2026)
-          • event type 확인: pull_request + opened/synchronize만 처리
-          • PR 메타데이터 추출: number, title, author, branch, diff_url
-          • Analysis Lambda 비동기 호출 (InvocationType: Event)
-          • 즉시 200 반환 → GitHub에 응답
-
-[T+0.5s]  Analysis Lambda (aiops-changemgmt-infra-analysis)
-          • PR 정보 수신
-          • BEDROCK_AGENT_ID 확인 → "ARTT9KIKKA" (Agent 모드)
-          
-[T+1.0s]  Bedrock AgentCore InvokeAgent 호출
-          • agentId: ARTT9KIKKA
-          • agentAliasId: HSRHSRPWOW
-          • sessionId: "pr-{number}-{timestamp}" (PR별 고유 세션)
-          • memoryId: "noenemy-aiops-changemgmt" (레포 단위, 세션 간 기억 유지)
-          • inputText: "PR #{number}을 분석해주세요. 제목: ... Author: ..."
-
-[T+1.5s]  Agent Runtime 시작 (Claude Sonnet 4)
-          • 시스템 프롬프트 로드 (코드 리뷰어 역할 + 과거 장애 이력 + Memory 참조 지시)
-          • Memory에서 이전 세션 요약 자동 로드 (같은 memoryId의 과거 대화)
-          
-[T+2.0s]  Agent 자율 판단: "diff를 확인해야 한다"
-          → Action Group 호출: get_pr_diff(pr_number=9)
-          → Action Group Lambda (aiops-changemgmt-action-group) 실행
-          → GitHub API: GET /repos/noenemy/aiops-changemgmt/pulls/9
-            (Accept: application/vnd.github.v3.diff)
-          → diff 내용 반환 (최대 15,000자)
-
-[T+4.0s]  Agent 자율 판단: "파일 목록도 확인하자"
-          → Action Group 호출: get_pr_files(pr_number=9)
-          → Action Group Lambda 실행
-          → GitHub API: GET /repos/noenemy/aiops-changemgmt/pulls/9/files
-          → 변경 파일 목록 반환 (filename, additions, deletions)
-
-[T+5.0s]  Agent 분석 수행
-          • diff + 파일 목록을 바탕으로 코드 분석
-          • 시스템 프롬프트의 분석 기준 적용:
-            - 보안, 성능, 안정성, 호환성
-          • 과거 장애 이력 매칭:
-            - "이 패턴은 INC-0042와 동일한 Race Condition이다"
-            - "당시 매출 손실 ₩12M, 다운타임 2시간"
-          • Memory 참조:
-            - "이전 세션에서 이 개발자는 보안 이슈로 REJECT된 적이 있다"
-          • Risk Score 산출 + 판정
-
-[T+15.0s] Agent 자율 판단: "결과를 GitHub에 남기자"
-          → Action Group 호출: post_github_comment(pr_number=9, comment_body="## 🔴 AI Code Review...")
-          → Action Group Lambda 실행
-          → GitHub API: POST /repos/noenemy/aiops-changemgmt/issues/9/comments
-          → PR에 마크다운 리뷰 코멘트 작성
-
-[T+17.0s] Agent 자율 판단: "Slack에도 리포트를 보내자"
-          → Action Group 호출: post_slack_report(report_json="{...}")
-          → Action Group Lambda 실행
-          → Slack API: POST chat.postMessage
-            (channel: C0ASW5X99E1, blocks: [...])
-          → #test-channel에 리포트 메시지 전송
-
-[T+20.0s] Agent 응답 완료
-          → Analysis Lambda에 "PR #9 분석을 완료했습니다" 반환
-
-[T+21.0s] 세션 종료 → Memory 자동 요약
-          • endSession=True 호출
-          • Agent Memory가 이 세션을 자동 요약하여 저장:
-            "PR #9: create_order.py Race Condition, Risk 92/100, CRITICAL, REJECT.
-             INC-0042와 동일 패턴. 결제-재고 불일치, 보상 트랜잭션 없음."
-          • 다음 PR 분석 시 이 요약이 Memory에서 자동으로 제공됨
-
-[T+22.0s] Analysis Lambda 종료
-```
-
-## 시나리오별 플로우 차이
-
-### Low Risk (L1, L2) — 자동 승인
+## 1. GitHub Webhook 경로 (PR opened/synchronize)
 
 ```
-PR 생성 → Webhook → Agent 분석
-  → "문자열 상수만 변경, 로직 없음"
-  → Risk 12/100, LOW, APPROVE
-  → GitHub 코멘트: "🟢 Risk 12/100 (LOW) — CI/CD 자동 실행"
-  → Slack: "✅ CI/CD 자동 실행"
-  → Memory: "PR #7: messages.py 한국어화, Low Risk, APPROVE"
+T+0.0s  개발자 PR 생성 (gh pr create 또는 웹 UI)
+T+0.1s  GitHub → POST /webhook (API Gateway)
+T+0.3s  webhook Lambda
+         • HMAC-SHA256 서명 검증
+         • event filter: pull_request + opened|synchronize
+         • Analysis Lambda 비동기 invoke → 200 OK 반환
+
+T+0.5s  analysis Lambda
+         • command 필드 없음 → webhook 경로로 판정
+         • invoke_agent_for_analysis(pr_data)
+
+T+1.0s  Bedrock Agent (session_id = analysis-pr9-..., memoryId = repo 단위)
+         • SESSION_SUMMARY(이전 세션 요약) 자동 주입
+         • detect_change_type → get_pr_diff → get_pr_files
+         • Persona 활성화(code/iac/mixed)
+         • queryKnowledgeBase 검색 (incidents/runbooks/policies)
+         • DDB 도구 호출 (get_review_history, get_developer_profile)
+         • (필요 시) invoke_security_agent / invoke_devops_agent
+         • RiskJudge 종합 → post_github_comment + post_slack_report
+
+T+~20s  endSession=True → Memory 요약 저장
+         다음 세션부터 이 PR의 요약이 자동 참조됨
 ```
 
-### High Risk (H1~H4) — 배포 차단
+## 2. `/analysis <PR>` 경로
 
 ```
-PR 생성 → Webhook → Agent 분석
-  → 이슈 발견 (Critical/High)
-  → 과거 장애 매칭 (INC-0042 등)
-  → Memory에서 개발자 패턴 확인
-  → Risk 82-95/100, HIGH/CRITICAL, REJECT
-  → GitHub 코멘트: "🔴 Risk 92/100 (CRITICAL) — CI/CD 스킵" + 상세 이슈
-  → Slack: "🚫 CI/CD 파이프라인 스킵" + 이슈 목록 + 과거 장애 연결
-  → Memory: "PR #9: Race Condition, CRITICAL, REJECT, INC-0042 패턴"
+Slack → POST /slack/commands (API Gateway)
+slack-command Lambda
+  • Slack X-Slack-Signature 검증
+  • /analysis, /reject, /fix 중 하나만 허용
+  • PR 메타 조회 (GitHub API)
+  • Analysis Lambda 비동기 invoke with {command: "analysis", ...}
+  • 3초 내 ephemeral ack: "🔍 PR #9 재분석을 시작했습니다"
+
+analysis Lambda
+  • command == "analysis" → webhook 경로와 동일하게 invoke_agent_for_analysis
 ```
 
-## Memory가 누적되는 플로우 (데모 순서)
+## 3. `/reject <PR> [사유]` 경로
 
 ```
-[1차 시연] L1: 메시지 한국어화
-  Memory: (비어있음 — 첫 리뷰)
-  결과: LOW, APPROVE
-  Memory 저장: "L1: 안전한 변경, APPROVE"
+slack-command Lambda
+  • 파싱: "9 보안 이슈 재검토" → {pr_number: 9, reason: "..."}
+  • Analysis Lambda 비동기 invoke with {command: "reject", ...}
 
-[2차 시연] H1: 시크릿 하드코딩
-  Memory: "이전에 L1 APPROVE"
-  결과: CRITICAL, REJECT
-  Memory 저장: "H1: 시크릿 노출+PCI DSS 위반, CRITICAL, REJECT"
-
-[3차 시연] H4: Race Condition (같은 개발자)
-  Memory: "이전에 L1 APPROVE, H1 CRITICAL REJECT"
-  Agent: "이 개발자는 이전 PR에서 보안 이슈로 REJECT 판정을 받았습니다.
-          이번 PR에서도 에러 핸들링과 보안 관점의 주의가 필요합니다."
-  결과: CRITICAL, REJECT (과거 장애 INC-0042 매칭)
-  Memory 저장: "H4: Race Condition, INC-0042 패턴, CRITICAL, REJECT"
-
-[4차 시연] H3: N+1 쿼리
-  Memory: "L1 APPROVE, H1 REJECT, H4 REJECT"
-  Agent: "이 레포에서 최근 REJECT 비율이 증가 추세입니다.
-          이전 리뷰에서 보안(H1)과 안정성(H4) 이슈가 연속으로 발견되었고,
-          이번에는 성능 이슈까지 추가되었습니다."
-  결과: HIGH, REJECT (과거 장애 INC-0041 매칭)
+analysis Lambda
+  • command == "reject" → Agent 건너뛰고 직접 처리
+  • _post_github_comment: "🚫 수동 REJECT ... 사유: ..."
+  • _post_slack: header + pr + reason + footer (직접 조립)
+  • Agent 호출 없음 → 비용/레이턴시 최소
 ```
 
-## Fallback 플로우 (Agent 실패 시)
+## 4. `/fix <PR>` 경로
 
 ```
-Analysis Lambda
-  │
-  ├── Agent 호출 시도 → 성공 → Agent가 모든 것 처리 (정상 경로)
-  │
-  └── Agent 호출 실패 → Fallback 경로
-        │
-        ├── GitHub API로 diff 직접 수집
-        ├── DynamoDB에서 과거 리뷰 이력 조회
-        ├── 장애 패턴 하드코딩 매칭
-        ├── 프롬프트 수동 구성
-        ├── Bedrock InvokeModel 직접 호출 (Claude Sonnet 4.6)
-        ├── JSON 파싱
-        ├── GitHub 코멘트 직접 작성
-        ├── Slack 리포트 직접 전송
-        └── DynamoDB에 이력 저장
+slack-command Lambda → Analysis Lambda with {command: "fix"}
+
+analysis Lambda
+  • invoke_agent_for_fix(pr_data)
+
+Bedrock Agent (session_id = fix-pr9-...)
+  • get_review_history(files=...) → 기존 이슈 파악
+  • get_pr_diff → 현재 코드 재확인
+  • 이슈별 구체적 수정 제안 작성
+  • post_github_fix_suggestion (일반 코멘트와 별도 헤더)
+  • post_slack_report(template="command_fix", ...)
 ```
 
-## 데모 운영 플로우
+## 5. Fallback 경로 (Agent 실패 시)
 
-```bash
-# 시나리오 목록 확인
-$ ./demo.sh list
+```
+analysis Lambda
+  try:
+    invoke_agent_for_analysis → 예외 발생 (timeout, 권한 등)
+  except:
+    fallback_direct()
+      • GitHub API로 diff 직접 수집
+      • Bedrock invoke_model (claude-sonnet-4-6) 직접 호출
+      • 간단한 프롬프트로 risk_score/verdict/summary JSON 받음
+      • GitHub 코멘트만 포스팅 (Slack, DDB, KB 없음)
+```
 
-# PR 생성 (시나리오 시작)
-$ ./demo.sh run h4
-  → PR 생성됨 → Webhook → Agent 분석 → GitHub 코멘트 + Slack 리포트
+## 6. KB 재인덱싱 흐름
 
-# PR 닫기 (재시연 준비)
-$ ./demo.sh reset h4
+```
+운영자: vi infra/kb-data/incidents/INC-0046.md
+        aws s3 sync infra/kb-data/ s3://<kb-bucket>/ --delete
 
-# 전체 초기화
-$ ./demo.sh reset-all
+S3: ObjectCreated:* or ObjectRemoved:* 이벤트 발생
+  → kb-reindex Lambda
+      • 20초 debounce (다중 파일 업로드 시 1회만 실행)
+      • bedrock-agent:StartIngestionJob 호출
+
+Bedrock KB: 비동기 인덱싱 (수분)
+  → 이후 queryKnowledgeBase에서 검색 가능
+```
+
+## 7. Memory 누적 예시 (같은 레포 세션 흐름)
+
+```
+[1] PR #5 L1 (i18n) → LOW APPROVE
+    Memory 저장: "PR#5 dev-ethan i18n LOW APPROVE"
+
+[2] PR #6 H1 (secret) → CRITICAL REJECT
+    Memory 로드: "PR#5 LOW"
+    Memory 저장: "PR#6 dev-ethan 시크릿 하드코딩 CRITICAL REJECT"
+
+[3] PR #7 H4 (race) → CRITICAL REJECT (같은 dev-ethan)
+    Memory 로드: "PR#5 LOW, PR#6 CRITICAL (시크릿)"
+    Agent: "dev-ethan은 이전 PR#6에서 보안 이슈로 REJECT, 이번에 안정성 이슈 추가"
+    Memory 저장: "PR#7 Race Condition CRITICAL REJECT INC-0042 패턴"
+
+[4] PR #8 (다른 개발자) 
+    Memory 로드: 위 3개 요약 전부 (레포 단위 memoryId)
+    Agent: "최근 REJECT 비율 67%, 보안/안정성 이슈 누적"
 ```

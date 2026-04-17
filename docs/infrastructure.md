@@ -1,111 +1,154 @@
-# 인프라 배포 및 리소스 맵
+# 인프라 리소스 맵 (v2)
 
-## AWS 계정 정보
+## 배포 위치
 
 | 항목 | 값 |
 |------|-----|
 | Account ID | `528757824852` |
 | Region | `ap-northeast-2` (Seoul) |
-| IAM User | `ethan.choi` |
-| CloudFormation Stack | `aiops-changemgmt-infra` |
+| Main Stack | `aiops-changemgmt-infra` |
+| Agent Stack | `aiops-changemgmt-agent` |
+| Sub-Agent Region (선택) | `us-east-1` (Virginia) — DevOps/Security Agent가 실재할 때만 사용 |
 
 ## 리소스 맵
 
-### Bedrock AgentCore
+### Lambda
 
-| 리소스 | ID / ARN | 설명 |
-|--------|----------|------|
-| **Agent** | `ARTT9KIKKA` | ChangeManagement 코드 리뷰 에이전트 |
-| **Agent Alias (prod)** | `HSRHSRPWOW` | 프로덕션 별칭 |
-| **Foundation Model** | `apac.anthropic.claude-sonnet-4-20250514-v1:0` | Claude Sonnet 4 (APAC inference profile) |
-| **Action Group** | `AP27THHAQZ` (`GitHubSlackTools`) | GitHub/Slack 도구 4개 |
-| **Memory** | `SESSION_SUMMARY`, 365일 | memoryId: `noenemy-aiops-changemgmt` (레포 단위) |
-| **Agent Role** | `arn:aws:iam::528757824852:role/aiops-changemgmt-agent-role` | Bedrock 모델 호출 권한 |
-
-### Lambda Functions
-
-| 함수명 | ARN | 역할 | Runtime | Memory | Timeout |
-|--------|-----|------|---------|--------|---------|
-| `aiops-changemgmt-infra-webhook` | `arn:aws:lambda:ap-northeast-2:528757824852:function:aiops-changemgmt-infra-webhook` | Webhook 수신 + 검증 | python3.13 | 256MB | 30s |
-| `aiops-changemgmt-infra-analysis` | `arn:aws:lambda:ap-northeast-2:528757824852:function:aiops-changemgmt-infra-analysis` | Agent 호출 오케스트레이터 | python3.13 | 1024MB | 300s |
-| `aiops-changemgmt-action-group` | `arn:aws:lambda:ap-northeast-2:528757824852:function:aiops-changemgmt-action-group` | Agent Action Group (GitHub/Slack 도구) | python3.13 | 512MB | 120s |
+| 함수명 | 역할 | Memory | Timeout |
+|--------|------|--------|---------|
+| `${Stack}-webhook` | GitHub Webhook 수신 + 검증 | 256MB | 30s |
+| `${Stack}-analysis` | Agent 호출 브리지 + Fallback | 1024MB | 300s |
+| `${Stack}-slack-command` | Slack Slash Command 서명 검증 + 비동기 라우팅 | 256MB | 10s |
+| `${Stack}-kb-reindex` | S3 Event → StartIngestionJob | 256MB | 30s |
+| `${AgentStack}-action-group` | Agent의 11개 Tool 실행기 | 512MB | 120s |
 
 ### API Gateway
 
-| 항목 | 값 |
-|------|-----|
-| API ID | `xrbg55j765` |
-| Stage | `prod` |
-| Webhook URL | `https://xrbg55j765.execute-api.ap-northeast-2.amazonaws.com/prod/webhook` |
-| Method | `POST /webhook` |
+| Path | Method | Lambda |
+|------|--------|--------|
+| `/prod/webhook` | POST | webhook Lambda |
+| `/prod/slack/commands` | POST | slack-command Lambda |
 
-### DynamoDB
+### Bedrock
 
-| 테이블명 | PK | SK | 용도 |
-|----------|-----|-----|------|
-| `aiops-changemgmt-infra-review-history` | `prKey` (S) | `reviewedAt` (S) | 리뷰 이력 저장 (fallback Memory) |
+| 리소스 | 설명 |
+|--------|------|
+| `ChangeManagementAgent` | 단일 오케스트레이터 Agent (Claude Sonnet 4 APAC profile) |
+| `AgentAlias (prod)` | 프로덕션 별칭 |
+| `KnowledgeBase` | `incidents`, `runbooks`, `policies` 시맨틱 검색 |
+| `KB DataSource (S3)` | InclusionPrefixes: `incidents/`, `runbooks/`, `policies/` |
+| `Memory` | SESSION_SUMMARY, 365일, memoryId = repo slug |
+
+### Storage
+
+| 리소스 | PK/SK / 용도 |
+|--------|--------------|
+| DynamoDB `review-history` | PK: prKey, SK: reviewedAt. Agent 자동 쓰기 |
+| DynamoDB `developer-profiles` | PK: author. 운영자 수동/배치 관리 |
+| DynamoDB `team-stats` | PK: teamId, SK: period. 분기별 집계 |
+| S3 `kb-data-${AccountId}` | Markdown 원본 (Versioning + ObjectCreated/Removed → Lambda) |
+| S3 Vectors `vectors-${AccountId}` | KB 벡터 저장소 (Index: `aiops-kb-index`, dim=1024, cosine) |
 
 ### Secrets Manager
 
-| Secret 이름 | ARN | 내용 |
-|-------------|-----|------|
-| `aiops-changemgmt-infra/github-token` | `arn:aws:secretsmanager:ap-northeast-2:528757824852:secret:aiops-changemgmt-infra/github-token-ART1FB` | GitHub Classic PAT |
-| `aiops-changemgmt-infra/slack-bot-token` | `arn:aws:secretsmanager:ap-northeast-2:528757824852:secret:aiops-changemgmt-infra/slack-bot-token-hmZxAm` | Slack Bot Token |
-
-### S3
-
-| Bucket | 용도 |
+| Secret | 내용 |
 |--------|------|
-| `aiops-changemgmt-infra-kb-data-528757824852` | KB 데이터 + Agent 스키마 저장 |
+| `${Stack}/github-token` | GitHub Personal Access Token (repo scope) |
+| `${Stack}/slack-bot-token` | Slack Bot User OAuth Token |
+| `${Stack}/slack-signing-secret` | Slack App Signing Secret (Slash Command 서명 검증) |
 
 ### IAM Roles
 
 | Role | 용도 |
 |------|------|
-| `aiops-changemgmt-agent-role` | Bedrock Agent 실행 (모델 호출) |
-| `aiops-changemgmt-action-group-role` | Action Group Lambda 실행 (Secrets + CloudWatch) |
-| `aiops-changemgmt-infra-WebhookFunctionRole-*` | Webhook Lambda (SAM 관리) |
-| `aiops-changemgmt-infra-AnalysisFunctionRole-*` | Analysis Lambda (SAM 관리) |
+| `${Stack}-kb-role` | KB 서비스 역할 (S3 read, S3 Vectors write, embedding model invoke) |
+| `${Stack}-kb-reindex-role` | Reindex Lambda 실행 (StartIngestionJob) |
+| `${AgentStack}-agent-role` | Bedrock Agent 실행 (모델 호출, KB retrieve) |
+| `${AgentStack}-action-group-role` | Action Group Lambda (Secrets, DDB read, cross-region InvokeAgent) |
 
-## GitHub 연동
+## Agent Tools (11개)
 
-| 항목 | 값 |
-|------|-----|
-| Repository | `noenemy/aiops-changemgmt` |
-| Webhook URL | `https://xrbg55j765.execute-api.ap-northeast-2.amazonaws.com/prod/webhook` |
-| Webhook Secret | `aiops-demo-webhook-2026` |
-| Webhook Events | `pull_request` (opened, synchronize) |
+| 도구 | 종류 | 대상 |
+|------|------|------|
+| get_pr_diff | PR | GitHub API |
+| get_pr_files | PR | GitHub API |
+| detect_change_type | PR | GitHub API (파일 분류) |
+| get_review_history | DDB | review-history |
+| get_developer_profile | DDB | developer-profiles |
+| get_team_stats | DDB | team-stats |
+| invoke_devops_agent | Sub-Agent | Stub 또는 Virginia Agent |
+| invoke_security_agent | Sub-Agent | Stub 또는 Virginia Agent |
+| post_github_comment | Output | GitHub API |
+| post_github_fix_suggestion | Output | GitHub API |
+| post_slack_report | Output | Slack API (템플릿 기반) |
+| (자동) queryKnowledgeBase | KB | Bedrock KB |
 
-## Slack 연동
+## 환경변수
 
-| 항목 | 값 |
-|------|-----|
-| Channel ID | `C0ASW5X99E1` |
-| Channel Name | `#test-channel` |
-| Bot Token Type | `xoxb-*` (Bot User OAuth Token) |
+### Analysis Lambda (`${Stack}-analysis`)
+| Var | 비고 |
+|-----|-----|
+| BEDROCK_AGENT_ID | 초기값 `"none"`, 배포 후 실제 ID로 업데이트 |
+| BEDROCK_AGENT_ALIAS_ID | 초기값 `"none"` |
+| BEDROCK_MODEL_ID | Fallback 모델 |
+| GITHUB_TOKEN_SECRET_ARN, SLACK_TOKEN_SECRET_ARN, SLACK_CHANNEL_ID, GITHUB_REPO | — |
 
-## 데모 브랜치
+### Action Group Lambda (`${AgentStack}-action-group`)
+| Var | 비고 |
+|-----|-----|
+| REVIEW_HISTORY_TABLE, DEVELOPER_PROFILES_TABLE, TEAM_STATS_TABLE | DDB 테이블 이름 |
+| DEVOPS_AGENT_ID, DEVOPS_AGENT_ALIAS_ID, DEVOPS_AGENT_REGION | 비었으면 Stub |
+| SECURITY_AGENT_ID, SECURITY_AGENT_ALIAS_ID, SECURITY_AGENT_REGION | 비었으면 Stub |
+| GITHUB_TOKEN_SECRET_ARN, SLACK_TOKEN_SECRET_ARN, SLACK_CHANNEL_ID, GITHUB_REPO | — |
 
-| ID | 브랜치 | 시나리오 | Risk 예상 |
-|----|--------|---------|----------|
-| L1 | `demo/i18n-messages` | 응답 메시지 한국어화 | LOW |
-| L2 | `demo/structured-logging` | 구조화 로깅 + request_id | LOW |
-| H1 | `demo/payment-integration` | 시크릿 하드코딩 + PII 로깅 | CRITICAL |
-| H2 | `demo/api-cleanup` | API 필드명 변경 (Breaking Change) | HIGH |
-| H3 | `demo/order-enrichment` | N+1 쿼리 + 무제한 페이로드 | HIGH |
-| H4 | `demo/checkout-feature` | Race Condition + 결제 불일치 | CRITICAL |
+### Slack Command Lambda (`${Stack}-slack-command`)
+| Var | 비고 |
+|-----|-----|
+| SLACK_SIGNING_SECRET_ARN | 서명 검증용 |
+| ANALYSIS_FUNCTION_NAME | 비동기 호출 타겟 |
+| GITHUB_TOKEN_SECRET_ARN, GITHUB_REPO | PR 메타 조회 |
 
-## 배포 명령어
+## 배포
 
+### 1. 메인 스택
 ```bash
-# SAM 스택 배포
 cd infra
-sam build && sam deploy --stack-name aiops-changemgmt-infra --region ap-northeast-2 --capabilities CAPABILITY_NAMED_IAM --resolve-s3
+sam build && sam deploy --stack-name aiops-changemgmt-infra --region ap-northeast-2 \
+  --capabilities CAPABILITY_NAMED_IAM --resolve-s3 \
+  --parameter-overrides GitHubToken=... SlackBotToken=... SlackSigningSecret=... SlackChannelId=...
+```
 
-# Agent 상태 확인
-aws bedrock-agent get-agent --agent-id ARTT9KIKKA --region ap-northeast-2
+### 2. KB 데이터 업로드
+```bash
+aws s3 sync infra/kb-data/ s3://<KBDataBucketName>/ --region ap-northeast-2 --delete
+```
 
-# Lambda 로그 확인
+### 3. Agent 스택
+```bash
+sam deploy -t infra/agent-template.yaml --stack-name aiops-changemgmt-agent \
+  --region ap-northeast-2 --capabilities CAPABILITY_NAMED_IAM --resolve-s3 \
+  --parameter-overrides \
+      KnowledgeBaseId=... ReviewHistoryTableName=... \
+      DeveloperProfilesTableName=... TeamStatsTableName=... \
+      GitHubTokenSecretArn=... SlackBotTokenSecretArn=... SlackChannelId=...
+```
+
+### 4. Analysis Lambda 환경변수 업데이트
+```bash
+AGENT_ID=$(aws cloudformation describe-stacks --stack-name aiops-changemgmt-agent \
+  --query "Stacks[0].Outputs[?OutputKey=='AgentId'].OutputValue" --output text)
+ALIAS_ID=$(aws cloudformation describe-stacks --stack-name aiops-changemgmt-agent \
+  --query "Stacks[0].Outputs[?OutputKey=='AgentAliasId'].OutputValue" --output text)
+
+aws lambda update-function-configuration \
+  --function-name aiops-changemgmt-infra-analysis \
+  --environment "Variables={BEDROCK_AGENT_ID=$AGENT_ID,BEDROCK_AGENT_ALIAS_ID=$ALIAS_ID,...}"
+```
+
+## 로그 / 디버깅
+```bash
 aws logs tail /aws/lambda/aiops-changemgmt-infra-analysis --since 5m --region ap-northeast-2
-aws logs tail /aws/lambda/aiops-changemgmt-action-group --since 5m --region ap-northeast-2
+aws logs tail /aws/lambda/aiops-changemgmt-infra-slack-command --since 5m --region ap-northeast-2
+aws logs tail /aws/lambda/aiops-changemgmt-agent-action-group --since 5m --region ap-northeast-2
+aws logs tail /aws/lambda/aiops-changemgmt-infra-kb-reindex --since 5m --region ap-northeast-2
 ```
