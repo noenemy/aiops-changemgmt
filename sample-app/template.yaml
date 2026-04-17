@@ -4,7 +4,7 @@ Description: AIOps Change Management - Sample Order Management App
 
 Globals:
   Function:
-    Runtime: python3.12
+    Runtime: python3.13
     MemorySize: 512
     Timeout: 30
     Environment:
