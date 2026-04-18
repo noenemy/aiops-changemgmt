@@ -1,0 +1,7 @@
+{
+  "type": "header",
+  "text": {
+    "type": "plain_text",
+    "text": "{{risk_emoji}} PR #{{pr_number}} — {{change_type_label}}"
+  }
+}

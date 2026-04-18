@@ -2,9 +2,9 @@
 
 Tools:
   [PR]             get_pr_diff, get_pr_files, detect_change_type
-  [DDB]            get_review_history, get_developer_profile, get_team_stats
+  [DDB]            get_review_history, get_developer_profile
   [Agent-as-Tool]  invoke_devops_agent, invoke_security_agent
-  [Output]         post_github_comment, post_github_fix_suggestion, post_slack_report
+  [Output]         post_github_comment, post_slack_report
 
 Agent Memory and queryKnowledgeBase are exposed automatically by Bedrock Agent runtime.
 """
@@ -423,10 +423,6 @@ TOOL_REGISTRY = {
                                     limit=int(get_param(p, "limit", "5")),
                                  ),
     "get_developer_profile":    lambda p: get_developer_profile(get_param(p, "author")),
-    "get_team_stats":           lambda p: get_team_stats(
-                                    team_id=get_param(p, "team_id"),
-                                    period=get_param(p, "period"),
-                                 ),
     "invoke_devops_agent":      lambda p: invoke_devops_agent(
                                     query=get_param(p, "query"),
                                     context=get_param(p, "context"),

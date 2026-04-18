@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  AIOps Change Management v2 — Webhook + Analysis + KB(S3 Vectors) + Slack Commands
+  AIOps Change Management v3 — Webhook + Analysis + KB(S3 Vectors) + Slack Commands (us-east-1, AgentCore backed)
 
 Parameters:
   GitHubToken:
@@ -28,7 +28,7 @@ Parameters:
     Default: global.anthropic.claude-sonnet-4-6
   EmbeddingModelArn:
     Type: String
-    Default: arn:aws:bedrock:ap-northeast-2::foundation-model/amazon.titan-embed-text-v2:0
+    Default: arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0
 
 Resources:
   # ============================================================
@@ -59,7 +59,7 @@ Resources:
   KBDataBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub ${AWS::StackName}-kb-data-${AWS::AccountId}
+      BucketName: !Sub ${AWS::StackName}-kb-data-${AWS::AccountId}-${AWS::Region}
       VersioningConfiguration:
         Status: Enabled
 
@@ -69,13 +69,13 @@ Resources:
   VectorBucket:
     Type: AWS::S3Vectors::VectorBucket
     Properties:
-      VectorBucketName: !Sub ${AWS::StackName}-vectors-${AWS::AccountId}
+      VectorBucketName: !Sub ${AWS::StackName}-vectors-${AWS::AccountId}-${AWS::Region}
 
   VectorIndex:
     Type: AWS::S3Vectors::Index
     DependsOn: VectorBucket
     Properties:
-      VectorBucketName: !Sub ${AWS::StackName}-vectors-${AWS::AccountId}
+      VectorBucketName: !Sub ${AWS::StackName}-vectors-${AWS::AccountId}-${AWS::Region}
       IndexName: aiops-kb-index
       DataType: float32
       Dimension: 1024
@@ -152,8 +152,8 @@ Resources:
                   - s3:GetObject
                   - s3:ListBucket
                 Resource:
-                  - !Sub arn:aws:s3:::${AWS::StackName}-kb-data-${AWS::AccountId}
-                  - !Sub arn:aws:s3:::${AWS::StackName}-kb-data-${AWS::AccountId}/*
+                  - !Sub arn:aws:s3:::${AWS::StackName}-kb-data-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:s3:::${AWS::StackName}-kb-data-${AWS::AccountId}-${AWS::Region}/*
               - Effect: Allow
                 Action:
                   - s3vectors:*
@@ -243,7 +243,7 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
-      SourceArn: !Sub arn:aws:s3:::${AWS::StackName}-kb-data-${AWS::AccountId}
+      SourceArn: !Sub arn:aws:s3:::${AWS::StackName}-kb-data-${AWS::AccountId}-${AWS::Region}
 
   # ============================================================
   # Webhook API Gateway
@@ -326,8 +326,8 @@ Resources:
           SLACK_TOKEN_SECRET_ARN: !Ref SlackBotTokenSecret
           SLACK_CHANNEL_ID: !Ref SlackChannelId
           GITHUB_REPO: !Ref GitHubRepo
-          BEDROCK_AGENT_ID: "none"
-          BEDROCK_AGENT_ALIAS_ID: "none"
+          # Set by deploy-time override once AgentCore Runtime stack is deployed.
+          AGENT_RUNTIME_ARN: "none"
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           REVIEW_HISTORY_TABLE: !Ref ReviewHistoryTable
           DEVELOPER_PROFILES_TABLE: !Ref DeveloperProfilesTable
@@ -346,9 +346,9 @@ Resources:
               Action:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
-                - bedrock:InvokeAgent
                 - bedrock:Retrieve
                 - bedrock:RetrieveAndGenerate
+                - bedrock-agentcore:InvokeAgentRuntime
               Resource: "*"
         - DynamoDBCrudPolicy:
             TableName: !Ref ReviewHistoryTable

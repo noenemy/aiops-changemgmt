@@ -2,6 +2,9 @@
 **/.aws-sam/
 samconfig.toml
 
+# AgentCore starter-toolkit local cache (deployment.zip + deps hash)
+**/.bedrock_agentcore/
+
 # Python
 __pycache__/
 *.py[cod]

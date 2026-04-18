@@ -1,0 +1,22 @@
+{
+  "blocks": [
+    {{>sections/pr_header}},
+    {{>sections/pr_fields}},
+    { "type": "divider" },
+    {{>sections/summary}}
+    {{#if infra_impact}},
+    {{>sections/infra_impact}}
+    {{/if}}
+    {{#if issues_text}},
+    {{>sections/issues_list}}
+    {{/if}}
+    {{#if incident_match}},
+    {{>sections/incident_match}}
+    {{/if}}
+    {{#if developer_pattern}},
+    {{>sections/developer_pattern}}
+    {{/if}},
+    { "type": "divider" },
+    {{>sections/footer}}
+  ]
+}

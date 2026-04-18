@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AIOps Change Management v3 — AgentCore Gateway + Memory + 5 Tool Lambdas.
+  Runtime itself is built/deployed via `agentcore` CLI (ECR image) — its ARN
+  is passed back to the analysis Lambda via the main stack's AGENT_RUNTIME_ARN.
+
+Parameters:
+  GitHubTokenSecretArn:
+    Type: String
+  SlackBotTokenSecretArn:
+    Type: String
+  SlackChannelId:
+    Type: String
+  GitHubRepo:
+    Type: String
+    Default: noenemy/aiops-changemgmt
+  KnowledgeBaseId:
+    Type: String
+  ReviewHistoryTableName:
+    Type: String
+  DeveloperProfilesTableName:
+    Type: String
+
+Resources:
+  # ============================================================
+  # Tool-call dedup table — prevents the same (session_id, tool_name)
+  # from being executed more than once per Runtime session. Used by
+  # pr_tools.post_github_comment and slack_tools.post_slack_report.
+  # TTL auto-purges after 24h.
+  # ============================================================
+  ToolDedupTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${AWS::StackName}-tool-dedup
+      AttributeDefinitions:
+        - AttributeName: dedupKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: dedupKey
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ============================================================
+  # AgentCore Memory — short-term events + long-term summary
+  # ============================================================
+  AgentCoreMemory:
+    Type: AWS::BedrockAgentCore::Memory
+    Properties:
+      Name: aiops_changemgmt_memory
+      Description: Per-repo long-term summaries of PR reviews.
+      EventExpiryDuration: 30
+      MemoryStrategies:
+        - SummaryMemoryStrategy:
+            Name: repo_summary
+            Namespaces:
+              - "repo/{actorId}/{sessionId}"
+
+  # ============================================================
+  # Tool Lambdas (5) — each exposes one group of tools to Gateway
+  # ============================================================
+  ToolLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-tool-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ToolPerms
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref GitHubTokenSecretArn
+                  - !Ref SlackBotTokenSecretArn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ReviewHistoryTableName}
+                  - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DeveloperProfilesTableName}
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt ToolDedupTable.Arn
+              - Effect: Allow
+                Action:
+                  - bedrock:Retrieve
+                  - bedrock:RetrieveAndGenerate
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:InvokeAgentRuntime
+                Resource: "*"
+
+  PrToolsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-pr-tools
+      Handler: handler.handler
+      Runtime: python3.13
+      CodeUri: ../agent/tools/pr/
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt ToolLambdaRole.Arn
+      Environment:
+        Variables:
+          GITHUB_TOKEN_SECRET_ARN: !Ref GitHubTokenSecretArn
+          GITHUB_REPO: !Ref GitHubRepo
+          DEDUP_TABLE: !Ref ToolDedupTable
+
+  DdbToolsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-ddb-tools
+      Handler: handler.handler
+      Runtime: python3.13
+      CodeUri: ../agent/tools/ddb/
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt ToolLambdaRole.Arn
+      Environment:
+        Variables:
+          REVIEW_HISTORY_TABLE: !Ref ReviewHistoryTableName
+          DEVELOPER_PROFILES_TABLE: !Ref DeveloperProfilesTableName
+
+  KbToolsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-kb-tools
+      Handler: handler.handler
+      Runtime: python3.13
+      CodeUri: ../agent/tools/kb/
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt ToolLambdaRole.Arn
+      Environment:
+        Variables:
+          KNOWLEDGE_BASE_ID: !Ref KnowledgeBaseId
+
+  SlackToolsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-slack-tools
+      Handler: handler.handler
+      Runtime: python3.13
+      CodeUri: ../agent/tools/slack/
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt ToolLambdaRole.Arn
+      Environment:
+        Variables:
+          SLACK_TOKEN_SECRET_ARN: !Ref SlackBotTokenSecretArn
+          SLACK_CHANNEL_ID: !Ref SlackChannelId
+          DEDUP_TABLE: !Ref ToolDedupTable
+
+  SubagentToolsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-subagent-tools
+      Handler: handler.handler
+      Runtime: python3.13
+      CodeUri: ../agent/tools/subagent/
+      MemorySize: 256
+      Timeout: 60
+      Role: !GetAtt ToolLambdaRole.Arn
+      Environment:
+        Variables:
+          DEVOPS_RUNTIME_ARN: ""
+          SECURITY_RUNTIME_ARN: ""
+
+Outputs:
+  MemoryId:
+    Value: !GetAtt AgentCoreMemory.MemoryId
+    Description: AgentCore Memory resource id (pass to runtime as MEMORY_ID)
+  PrToolsArn:
+    Value: !GetAtt PrToolsFunction.Arn
+  DdbToolsArn:
+    Value: !GetAtt DdbToolsFunction.Arn
+  KbToolsArn:
+    Value: !GetAtt KbToolsFunction.Arn
+  SlackToolsArn:
+    Value: !GetAtt SlackToolsFunction.Arn
+  SubagentToolsArn:
+    Value: !GetAtt SubagentToolsFunction.Arn

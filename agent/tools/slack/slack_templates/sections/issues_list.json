@@ -1,0 +1,4 @@
+{
+  "type": "section",
+  "text": { "type": "mrkdwn", "text": "*발견된 이슈:*\n{{issues_text}}" }
+}
