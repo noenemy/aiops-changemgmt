@@ -123,6 +123,21 @@ aiops-changemgmt/
 ./demo.sh reset-all         # 모든 데모 PR 닫기
 ```
 
+## 데모 콘솔 (`demo-console/`)
+
+부스/영상 녹화용 Next.js 웹 콘솔. 시나리오 설명, 활성 경로가 하이라이트되는 아키텍처 다이어그램, 터미널 뷰, Slack 리포트 미리보기를 한 화면에 묶어 보여줍니다.
+
+- **연출(scripted) 모드**: 미리 정의된 시나리오 출력을 타이핑 애니메이션으로 재생. 네트워크/AWS 크레덴셜 없이 동작.
+- **실제(live) 모드**: 브라우저에서 `./demo.sh run <id>`를 실제로 트리거하고 stdout을 SSE로 스트리밍.
+
+```bash
+cd demo-console
+npm install
+npm run dev      # http://localhost:3001
+```
+
+세부 사용법, 녹화 전 체크리스트, 시나리오 편집 방법: [`demo-console/README.md`](demo-console/README.md)
+
 ## 시작하기
 
 ### 사전 요구사항
@@ -184,6 +199,7 @@ Slash Commands 3개의 Request URL을 `SlackCommandUrl`로 설정. 자세한 내
 - [`docs/slack-setup.md`](docs/slack-setup.md) — Slack App 설정
 - [`infra/kb-data/README.md`](infra/kb-data/README.md) — KB 데이터 편집
 - [`agent/slack_templates/README.md`](agent/slack_templates/README.md) — Slack 템플릿 편집
+- [`demo-console/README.md`](demo-console/README.md) — 데모 콘솔 실행 및 녹화 가이드
 
 ## 라이선스
 
