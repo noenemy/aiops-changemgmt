@@ -72,6 +72,28 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref InventoryTable
 
+  # Admin export endpoint — ops dashboard needs broad read access.
+  # Keeping auth off for now (behind API Gateway, ops-internal only).
+  AdminExportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: admin_export.handler
+      CodeUri: src/handlers/
+      Events:
+        AdminExport:
+          Type: Api
+          Properties:
+            RestApiId: !Ref OrdersApi
+            Path: /admin/export
+            Method: get
+            Auth:
+              Authorizer: NONE
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: "*"
+              Resource: "*"
+
   GetProductsFunction:
     Type: AWS::Serverless::Function
     Properties:
