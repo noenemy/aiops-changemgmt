@@ -2,8 +2,6 @@
   "type": "section",
   "fields": [
     { "type": "mrkdwn", "text": "*PR:* <{{pr_url}}|{{pr_title}}>" },
-    { "type": "mrkdwn", "text": "*Author:* {{pr_author}}" },
-    { "type": "mrkdwn", "text": "*Risk:* {{risk_emoji}} {{risk_score}}/100 ({{risk_level}})" },
-    { "type": "mrkdwn", "text": "*판정:* {{verdict_label}}" }
+    { "type": "mrkdwn", "text": "*Author:* {{pr_author}}" }
   ]
 }

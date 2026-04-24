@@ -2,21 +2,30 @@
   "blocks": [
     {{>sections/pr_header}},
     {{>sections/pr_fields}},
-    { "type": "divider" },
+    {{>sections/risk_bar}},
+    { "type": "divider" }
+    {{#if summary}},
     {{>sections/summary}}
+    {{/if}}
+    {{#if code_block}},
+    {{>sections/code_block}}
+    {{/if}}
     {{#if infra_impact}},
     {{>sections/infra_impact}}
     {{/if}}
-    {{#if issues_text}},
-    {{>sections/issues_list}}
+    {{#each issues}}
+    ,{ "type": "divider" },
+    {{>sections/issue_item}}
+    {{/each}}
+    {{#if incident_code}}
+    ,{ "type": "divider" },
+    {{>sections/incident_code}}
     {{/if}}
-    {{#if incident_match}},
-    {{>sections/incident_match}}
-    {{/if}}
-    {{#if developer_pattern}},
+    {{#if developer_pattern}}
+    ,{ "type": "divider" },
     {{>sections/developer_pattern}}
-    {{/if}},
-    { "type": "divider" },
+    {{/if}}
+    ,{ "type": "divider" },
     {{>sections/footer}}
   ]
 }

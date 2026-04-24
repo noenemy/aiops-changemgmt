@@ -1,0 +1,7 @@
+{
+  "type": "section",
+  "text": {
+    "type": "mrkdwn",
+    "text": "⚠️ *과거 유사 장애*\n{{incident_match}}\n```\n{{incident_code}}\n```\n→ _이번 PR 이 동일 패턴을 재도입_"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "type": "section",
+  "text": {
+    "type": "mrkdwn",
+    "text": "*{{.severity_emoji}} 이슈 #{{index}} — {{.severity}}*  `{{.title}}`{{#if .line_range}} _({{.line_range}})_{{/if}}\n```\n{{.code}}\n```\n*왜 위험한가*: {{.why}}{{#if .fix}}\n*수정 제안*:\n```\n{{.fix}}\n```{{/if}}"
+  }
+}

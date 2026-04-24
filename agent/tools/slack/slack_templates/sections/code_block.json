@@ -1,0 +1,7 @@
+{
+  "type": "section",
+  "text": {
+    "type": "mrkdwn",
+    "text": "📄 *변경된 코드 (핵심)*\n```\n{{code_block}}\n```"
+  }
+}

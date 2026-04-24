@@ -1,0 +1,7 @@
+{
+  "type": "section",
+  "text": {
+    "type": "mrkdwn",
+    "text": "*Risk* {{risk_bar}} *{{risk_score}}/100* · {{risk_level}}\n*판정* {{verdict_label}}"
+  }
+}

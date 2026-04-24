@@ -26,6 +26,49 @@ def _change_type_label(ct: str) -> str:
     return {"code": "코드 리뷰", "iac": "인프라 변경", "mixed": "코드 + 인프라"}.get(ct, "변경")
 
 
+def _risk_bar(score) -> str:
+    try:
+        s = int(score)
+    except Exception:
+        s = 0
+    filled = max(0, min(10, round(s / 10)))
+    # Use the color that matches the severity level for better at-a-glance scan
+    if s >= 81:
+        box = "🟥"
+    elif s >= 51:
+        box = "🟧"
+    elif s >= 21:
+        box = "🟨"
+    else:
+        box = "🟩"
+    return box * filled + "⬜" * (10 - filled)
+
+
+_SEVERITY_EMOJI = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}
+
+
+def _enrich_issues(raw):
+    """Normalize `issues` into a list of dicts with severity_emoji populated.
+
+    Accepts either a list already or a JSON string (the agent often sends JSON).
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        sev = (item.get("severity") or "").upper()
+        item.setdefault("severity_emoji", _SEVERITY_EMOJI.get(sev, "⚪"))
+        out.append(item)
+    return out
+
+
 _KNOWN_TEMPLATES = {"code_review", "infra_review", "command_analysis",
                     "command_reject", "command_fix"}
 
@@ -39,10 +82,12 @@ def post_slack_report(report_json: str) -> str:
         template = "infra_review" if ct in ("iac", "mixed") else "code_review"
 
     ctx.setdefault("risk_emoji", _risk_emoji(ctx.get("risk_level", "LOW")))
+    ctx.setdefault("risk_bar", _risk_bar(ctx.get("risk_score", 0)))
     ctx.setdefault("verdict_label",
                    "✅ CI/CD 자동 실행" if ctx.get("verdict") == "APPROVE" else "🚫 CI/CD 파이프라인 스킵")
     ctx.setdefault("change_type_label", _change_type_label(ctx.get("change_type", "code")))
     ctx.setdefault("timestamp", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    ctx["issues"] = _enrich_issues(ctx.get("issues"))
 
     blocks = render_template(template, ctx)
     slack_token = get_secret(SLACK_TOKEN_SECRET_ARN)
