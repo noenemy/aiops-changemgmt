@@ -1,258 +1,207 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import mermaid from "mermaid";
+import { useMemo } from "react";
 
-import { HighlightedNode } from "@/data/scenarios";
+import { AgentNode, HighlightedNode, getScenario } from "@/data/scenarios";
 
 export type NodeState = "pending" | "active" | "done";
 
 interface Props {
-  // All nodes that will be touched during the run.
+  // Kept from the legacy contract so page.tsx doesn't need to change.
   highlightPath: HighlightedNode[];
-  // Per-node current state (pending / active / done). Optional — if omitted,
-  // the whole path is rendered as `done` for static preview.
   nodeStates?: Record<string, NodeState>;
-  // Re-render when scenario changes.
   scenarioId: string;
 }
 
-// Mermaid node ids → our semantic ids. Keep them 1:1 so highlight targeting
-// is trivial in post-render CSS class manipulation.
-const DIAGRAM = `
-flowchart LR
-  github[GitHub PR]:::ext
-  slack[Slack]:::ext
+// Pyramid layout:
+//   Top row    — GitHub ──► Strands Agent ──► Slack
+//   Bottom row — Code · Security · Infra  (sub-agents fanned under Strands)
+//
+// Fits into 400×140 so the panel stays short vertically.
+const LAYOUT: Record<AgentNode, { x: number; y: number; label: string; emoji: string }> = {
+  github:   { x:  50, y:  30, label: "GitHub",   emoji: "🐙" },
+  agent:    { x: 200, y:  30, label: "Strands",  emoji: "🤖" },
+  slack:    { x: 350, y:  30, label: "Slack",    emoji: "💬" },
+  code:     { x: 110, y: 110, label: "Code",     emoji: "💻" },
+  security: { x: 200, y: 110, label: "Security", emoji: "🛡️" },
+  infra:    { x: 290, y: 110, label: "Infra",    emoji: "🏗️" },
+};
 
-  subgraph ingress[API Gateway]
-    webhook[webhook Lambda]
-    analysis[analysis Lambda]
-  end
+const NODE_W = 64;
+const NODE_H = 34;
 
-  subgraph agentcore[AgentCore - us-east-1]
-    runtime[Strands Runtime<br/>3 Persona]
-    memory[(Memory<br/>repo summary)]
-    gateway[MCP Gateway]
-    subgraph tools[Tool Lambdas]
-      pr_tools[pr_tools]
-      kb_tools[kb_tools]
-      ddb_tools[ddb_tools]
-      slack_tools[slack_tools]
-    end
-  end
-
-  kb[(Bedrock KB<br/>S3 Vectors)]
-
-  github --> webhook --> analysis --> runtime
-  runtime <-.-> memory
-  runtime --> gateway
-  gateway --> pr_tools
-  gateway --> kb_tools
-  gateway --> ddb_tools
-  gateway --> slack_tools
-  kb_tools --> kb
-  pr_tools --> github
-  slack_tools --> slack
-`;
-
-// List of known node ids (must match the ids used in DIAGRAM above).
-const NODE_IDS = [
-  "github",
-  "slack",
-  "webhook",
-  "analysis",
-  "runtime",
-  "memory",
-  "gateway",
-  "pr_tools",
-  "kb_tools",
-  "ddb_tools",
-  "slack_tools",
-  "kb",
-] as const;
-
-// Directed edges we care about animating. Must be kept in sync with DIAGRAM
-// so that class assignment lines up with the actual <path> elements.
-const EDGES: Array<[HighlightedNode, HighlightedNode]> = [
-  ["github", "webhook"],
-  ["webhook", "analysis"],
-  ["analysis", "runtime"],
-  ["runtime", "memory"],
-  ["runtime", "gateway"],
-  ["gateway", "pr_tools"],
-  ["gateway", "kb_tools"],
-  ["gateway", "ddb_tools"],
-  ["gateway", "slack_tools"],
-  ["kb_tools", "kb"],
-  ["pr_tools", "github"],
-  ["slack_tools", "slack"],
+// Edges we animate. Source first, target second.
+const EDGES: Array<[AgentNode, AgentNode]> = [
+  ["github", "agent"],
+  ["agent", "slack"],
+  ["agent", "code"],
+  ["agent", "security"],
+  ["agent", "infra"],
 ];
 
-let mermaidInitialised = false;
+export function ArchitectureDiagram({ highlightPath, nodeStates, scenarioId }: Props) {
+  // Prefer the explicit agentPath if the scenario defined one. Otherwise
+  // fall back to a reasonable guess from the legacy highlightPath so nothing
+  // regresses in components that haven't been updated yet.
+  const agentPath = useMemo<AgentNode[]>(() => {
+    const s = getScenario(scenarioId);
+    if (s?.agentPath?.length) return s.agentPath;
+    // Minimal fallback — old scenarios without agentPath just show the
+    // orchestrator, its code reviewer, and the Slack notification.
+    return ["github", "agent", "code", "slack"];
+  }, [scenarioId]);
 
-export function ArchitectureDiagram({
-  highlightPath,
-  nodeStates,
-  scenarioId,
-}: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const onPath = useMemo(() => new Set(agentPath), [agentPath]);
 
-  useEffect(() => {
-    if (mermaidInitialised) return;
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: "dark",
-      themeVariables: {
-        background: "#0b1220",
-        primaryColor: "#111a2e",
-        primaryTextColor: "#e8ecf5",
-        primaryBorderColor: "#334155",
-        lineColor: "#475569",
-        fontFamily: "JetBrains Mono, monospace",
-        fontSize: "14px",
-      },
-      securityLevel: "loose",
-      flowchart: {
-        curve: "basis",
-        nodeSpacing: 40,
-        rankSpacing: 60,
-        padding: 14,
-      },
-    });
-    mermaidInitialised = true;
-  }, []);
+  // Derive agent-node state from the legacy node-state map. The legacy
+  // nodes mostly map to the architecture's "agent" node; we only want to
+  // distinguish idle / running / done at the graph level.
+  const overallState: "idle" | "running" | "done" = useMemo(() => {
+    const states = Object.values(nodeStates ?? {});
+    if (states.length === 0) return "idle";
+    if (states.every((s) => s === "done")) return "done";
+    if (states.some((s) => s === "active")) return "running";
+    return "idle";
+  }, [nodeStates]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const render = async () => {
-      const el = containerRef.current;
-      if (!el) return;
-      try {
-        const { svg } = await mermaid.render(
-          `arch-${scenarioId}-${Date.now()}`,
-          DIAGRAM,
-        );
-        if (cancelled) return;
-        el.innerHTML = svg;
-        const svgEl = el.querySelector("svg");
-        if (svgEl) {
-          svgRef.current = svgEl as SVGSVGElement;
-          tagNodesAndEdges(svgEl as SVGSVGElement);
-          applyNodeStates(svgEl as SVGSVGElement, highlightPath, nodeStates);
-        }
-      } catch (err) {
-        if (cancelled) return;
-        el.innerHTML = `<pre class="text-accent-red text-xs p-4">${String(err)}</pre>`;
-      }
-    };
-    void render();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scenarioId, highlightPath]);
-
-  useEffect(() => {
-    const svgEl = svgRef.current;
-    if (!svgEl) return;
-    applyNodeStates(svgEl, highlightPath, nodeStates);
-  }, [nodeStates, highlightPath]);
+  // Per-agent-node state: everything on the path is either "active" or "done"
+  // depending on overallState. Nodes off the path stay muted.
+  const nodeStateFor = (n: AgentNode): "off" | "active" | "done" => {
+    if (!onPath.has(n)) return "off";
+    if (overallState === "done") return "done";
+    // Even before the run starts we highlight the path faintly so viewers
+    // can read which agents *would* be used. We treat idle as "done-muted"
+    // visually — same colors but no pulse.
+    if (overallState === "idle") return "done";
+    return "active";
+  };
 
   return (
     <div className="rounded-lg border border-white/10 bg-bg-panel p-4 overflow-visible">
       <div className="flex items-center justify-between mb-2">
-        <div className="text-xs text-ink-muted font-mono">
-          아키텍처 · 활성 경로
-        </div>
+        <div className="text-xs text-ink-muted font-mono">아키텍처 · 활성 경로</div>
         <Legend />
       </div>
-      <div ref={containerRef} className="min-h-[280px] arch-svg-host" />
+      <svg
+        viewBox="0 0 400 150"
+        className="w-full h-auto arch-svg-host"
+        preserveAspectRatio="xMidYMid meet"
+      >
+        <defs>
+          {/* Arrow head, rendered as a small SVG marker. Colored via
+              currentColor so we can swap the stroke on the parent path. */}
+          <marker
+            id="arch-arrow"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="5"
+            markerHeight="5"
+            orient="auto-start-reverse"
+          >
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+          </marker>
+
+          {/* Soft glow for the active node. */}
+          <filter id="arch-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {/* Edges */}
+        {EDGES.map(([from, to]) => {
+          const a = LAYOUT[from];
+          const b = LAYOUT[to];
+          const active =
+            onPath.has(from) && onPath.has(to) && overallState === "running";
+          const done =
+            onPath.has(from) && onPath.has(to) && overallState === "done";
+          const idle =
+            onPath.has(from) && onPath.has(to) && overallState === "idle";
+
+          const cls = active
+            ? "arch-edge active"
+            : done
+            ? "arch-edge done"
+            : idle
+            ? "arch-edge done muted"
+            : "arch-edge off";
+
+          // github→agent stays horizontal; every agent→sub-agent edge drops
+          // vertically with a gentle S-curve so stacked targets read cleanly.
+          const horizontal = Math.abs(a.y - b.y) < 10;
+          const halfW = NODE_W / 2;
+          const halfH = NODE_H / 2;
+          const d = horizontal
+            ? `M ${a.x + halfW} ${a.y} L ${b.x - halfW} ${b.y}`
+            : (() => {
+                const sx = a.x;
+                const sy = a.y + halfH;
+                const tx = b.x;
+                const ty = b.y - halfH;
+                const midY = (sy + ty) / 2;
+                return `M ${sx} ${sy} C ${sx} ${midY}, ${tx} ${midY}, ${tx} ${ty}`;
+              })();
+
+          return (
+            <g key={`${from}-${to}`}>
+              <path d={d} className={cls} markerEnd="url(#arch-arrow)" />
+              {active && (
+                // A packet that travels along the path while the run is live.
+                <circle r="3" className="arch-packet">
+                  <animateMotion dur="1.4s" repeatCount="indefinite" path={d} />
+                </circle>
+              )}
+            </g>
+          );
+        })}
+
+        {/* Nodes */}
+        {(Object.keys(LAYOUT) as AgentNode[]).map((id) => {
+          const { x, y, label, emoji } = LAYOUT[id];
+          const st = nodeStateFor(id);
+          const cls = `arch-node ${st}`;
+          const cx = NODE_W / 2;
+          return (
+            <g
+              key={id}
+              transform={`translate(${x - NODE_W / 2} ${y - NODE_H / 2})`}
+              className={cls}
+            >
+              <rect
+                width={NODE_W}
+                height={NODE_H}
+                rx="6"
+                ry="6"
+              />
+              <text
+                x={cx}
+                y={13}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                className="arch-node-emoji"
+              >
+                {emoji}
+              </text>
+              <text
+                x={cx}
+                y={26}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                className="arch-node-label"
+              >
+                {label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
-}
-
-// Tag node groups and edge paths with stable data attributes so we can
-// target them later regardless of Mermaid's generated ids.
-function tagNodesAndEdges(svgEl: SVGSVGElement) {
-  // Nodes
-  for (const id of NODE_IDS) {
-    const g = svgEl.querySelector(
-      `g.node[id^="flowchart-${id}-"]`,
-    ) as SVGGElement | null;
-    if (g) g.setAttribute("data-node", id);
-  }
-
-  // Edges — Mermaid v11 tags each edge path id as `L_from_to_idx`. We walk
-  // our known EDGES array in order and match against the rendered paths.
-  const edgePaths = Array.from(
-    svgEl.querySelectorAll<SVGPathElement>("g.edgePaths path"),
-  );
-
-  for (const path of edgePaths) {
-    const id = path.id || "";
-    // id looks like "L_github_webhook_0" or "L-github-webhook-0".
-    const m = id.match(/^L[_-]([^_-]+(?:_[^_-]+)*)[_-]([^_-]+(?:_[^_-]+)*)[_-]\d+$/)
-      || id.match(/^L[_-](.+?)[_-](.+?)[_-]\d+$/);
-    if (m) {
-      path.setAttribute("data-from", m[1]);
-      path.setAttribute("data-to", m[2]);
-    }
-  }
-}
-
-function applyNodeStates(
-  svgEl: SVGSVGElement,
-  highlightPath: HighlightedNode[],
-  nodeStates?: Record<string, NodeState>,
-) {
-  // ── Nodes ───────────────────────────────────────────────────────────
-  const allNodes = svgEl.querySelectorAll<SVGGElement>("g.node[data-node]");
-  const stateById = new Map<string, NodeState | "off">();
-
-  allNodes.forEach((g) => {
-    const id = g.getAttribute("data-node")!;
-    g.classList.remove("arch-on-path", "arch-active", "arch-done");
-
-    if (!highlightPath.includes(id as HighlightedNode)) {
-      stateById.set(id, "off");
-      return;
-    }
-
-    const state = nodeStates?.[id] ?? "done";
-    g.classList.add("arch-on-path");
-    if (state === "active") g.classList.add("arch-active");
-    else if (state === "done") g.classList.add("arch-done");
-    stateById.set(id, state);
-  });
-
-  // ── Edges ───────────────────────────────────────────────────────────
-  // An edge's state is derived from its endpoints:
-  //   done   — both endpoints done
-  //   active — edge is "entering" an active node (source done, target active)
-  //   else   — dim
-  const edgePaths = svgEl.querySelectorAll<SVGPathElement>(
-    "g.edgePaths path[data-from]",
-  );
-  edgePaths.forEach((p) => {
-    p.classList.remove("edge-done", "edge-active");
-    const from = p.getAttribute("data-from")!;
-    const to = p.getAttribute("data-to")!;
-    const sFrom = stateById.get(from);
-    const sTo = stateById.get(to);
-
-    if (sFrom === "off" || sTo === "off") return;
-
-    if (sFrom === "done" && sTo === "active") {
-      p.classList.add("edge-active");
-    } else if (sFrom === "done" && sTo === "done") {
-      p.classList.add("edge-done");
-    } else if (sFrom === "active" && sTo === "pending") {
-      // Agent just started this branch — still show as active so the viewer
-      // sees motion leading away from the current node.
-      p.classList.add("edge-active");
-    }
-  });
 }
 
 function Legend() {

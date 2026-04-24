@@ -30,6 +30,24 @@ export type HighlightedNode =
   | "kb"
   | "slack";
 
+// Simplified node set for the right-hand architecture diagram.
+//   github   — PR origin
+//   agent    — Strands Agent (AIOps orchestrator)
+//   code     — CodeReviewer sub-agent
+//   security — SecurityReviewer sub-agent
+//   infra    — InfraReviewer sub-agent
+//   slack    — final notification target (sits right of the orchestrator)
+//
+// agentPath is optional — if omitted, the diagram defaults to
+// ["github", "agent", "code", "slack"] (a plain orchestrator-only run).
+export type AgentNode =
+  | "github"
+  | "agent"
+  | "code"
+  | "security"
+  | "infra"
+  | "slack";
+
 export interface SlackIssue {
   severity: Severity;
   title: string;
@@ -83,6 +101,11 @@ export interface Scenario {
     expectedSeconds: number;
   };
   highlightPath: HighlightedNode[];
+  // Subset of AgentNode that this scenario actually exercises on the
+  // simplified architecture panel. Optional — omitted scenarios default
+  // to ["github","agent"] (plus kb/memory/security derived from
+  // highlightPath).
+  agentPath?: AgentNode[];
   slackPreview: SlackPreview;
 }
 
@@ -131,6 +154,7 @@ export const scenarios: Scenario[] = [
       expectedSeconds: 95,
     },
     highlightPath: ["github", "webhook", "analysis", "runtime", "pr_tools", "slack_tools", "slack"],
+    agentPath: ["github", "agent", "code", "slack"],
     slackPreview: {
       pr_number: 20,
       pr_title: "feat: API 응답 메시지 한국어 지원",
@@ -241,6 +265,7 @@ export const scenarios: Scenario[] = [
       "slack_tools",
       "slack",
     ],
+    agentPath: ["github", "agent", "code", "slack"],
     slackPreview: {
       pr_number: 21,
       pr_title: "refactor: 구조화 로깅 적용 및 request_id 추가",
@@ -359,6 +384,7 @@ last_key = response.get("LastEvaluatedKey")
       "slack_tools",
       "slack",
     ],
+    agentPath: ["github", "agent", "code", "security", "slack"],
     slackPreview: {
       pr_number: 22,
       pr_title: "feat: 외부 결제 서비스 연동",
@@ -532,6 +558,7 @@ logger.debug(f"Payment details: card={card_token}")`,
       "slack_tools",
       "slack",
     ],
+    agentPath: ["github", "agent", "code", "slack"],
     slackPreview: {
       pr_number: 23,
       pr_title: "refactor: API 응답 필드명 컨벤션 통일",
@@ -655,6 +682,7 @@ return {
       "slack_tools",
       "slack",
     ],
+    agentPath: ["github", "agent", "code", "slack"],
     slackPreview: {
       pr_number: 24,
       pr_title: "feat: 주문 목록에 상품 상세 정보 포함",
@@ -818,6 +846,7 @@ for order in orders:
       "slack_tools",
       "slack",
     ],
+    agentPath: ["github", "agent", "code", "security", "slack"],
     slackPreview: {
       pr_number: 25,
       pr_title: "feat: 주문 생성 시 재고 차감 및 결제 처리",
@@ -988,6 +1017,7 @@ inventory_table.update_item(
       "slack_tools",
       "slack",
     ],
+    agentPath: ["github", "agent", "infra", "slack"],
     slackPreview: {
       pr_number: 26,
       pr_title: "chore(infra): 거버넌스 태그 + 로그 보존 90일",
@@ -1155,6 +1185,7 @@ inventory_table.update_item(
       "slack_tools",
       "slack",
     ],
+    agentPath: ["github", "agent", "infra", "security", "slack"],
     slackPreview: {
       pr_number: 28,
       pr_title: "feat(infra): Lambda 보안그룹 egress를 내부 CIDR로 제한",

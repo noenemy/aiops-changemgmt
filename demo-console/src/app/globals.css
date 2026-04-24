@@ -177,6 +177,115 @@ body {
   }
 }
 
+/* ──────────────────────────────────────────────────────────────
+   New simplified architecture diagram (hand-rolled SVG)
+   ────────────────────────────────────────────────────────────── */
+
+/* Nodes.
+   Animation is applied only to the <rect> so the surrounding <g>'s
+   translate() attribute isn't overwritten by a CSS transform. Emoji text
+   has no `fill` so the browser renders the native colour glyph. */
+.arch-svg-host .arch-node > rect {
+  fill: #0f172a;
+  stroke: #334155;
+  stroke-width: 1.5;
+  transition: stroke 150ms ease, fill 150ms ease, stroke-width 150ms ease;
+}
+.arch-svg-host .arch-node .arch-node-emoji {
+  font-size: 13px;
+  /* no fill — let browser render colour emoji natively */
+}
+.arch-svg-host .arch-node .arch-node-label {
+  font-size: 8px;
+  font-weight: 600;
+  fill: #cbd5e1;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Off-path — keep muted but still legible. */
+.arch-svg-host .arch-node.off > rect {
+  fill: #0b1220;
+  stroke: #1e293b;
+  stroke-dasharray: 3 3;
+}
+.arch-svg-host .arch-node.off .arch-node-emoji,
+.arch-svg-host .arch-node.off .arch-node-label {
+  opacity: 0.35;
+}
+
+/* Done — green solid. */
+.arch-svg-host .arch-node.done > rect {
+  fill: rgba(34, 197, 94, 0.12);
+  stroke: #22c55e;
+  stroke-width: 2;
+}
+.arch-svg-host .arch-node.done .arch-node-label {
+  fill: #e8ecf5;
+}
+
+/* Active — orange pulse.
+   pulse targets the rect only; the `<g>` above keeps its static
+   translate() so the whole node doesn't teleport to the origin. */
+.arch-svg-host .arch-node.active > rect {
+  fill: rgba(255, 153, 0, 0.22);
+  stroke: #ff9900;
+  stroke-width: 3;
+  animation: archActiveBlinkSimple 0.8s ease-in-out infinite;
+}
+.arch-svg-host .arch-node.active .arch-node-label {
+  fill: #fff;
+  font-weight: 800;
+}
+
+@keyframes archActiveBlinkSimple {
+  0%, 100% { stroke: #ff9900; stroke-width: 3;
+             fill: rgba(255, 153, 0, 0.22); }
+  50%      { stroke: #ffd37a; stroke-width: 4;
+             fill: rgba(255, 153, 0, 0.35); }
+}
+
+/* Edges */
+.arch-svg-host .arch-edge {
+  fill: none;
+  stroke: #334155;
+  stroke-width: 1.5;
+  color: #334155;
+  transition: stroke 150ms ease, stroke-width 150ms ease;
+}
+.arch-svg-host .arch-edge.off {
+  stroke: #1e293b;
+  color: #1e293b;
+  stroke-dasharray: 3 4;
+}
+.arch-svg-host .arch-edge.done {
+  stroke: #22c55e;
+  stroke-width: 2;
+  color: #22c55e;
+}
+.arch-svg-host .arch-edge.done.muted {
+  /* Idle preview — show the path but don't scream. */
+  stroke: #15803d;
+  color: #15803d;
+  stroke-width: 1.5;
+  opacity: 0.7;
+}
+.arch-svg-host .arch-edge.active {
+  stroke: #ff9900;
+  stroke-width: 2.5;
+  color: #ff9900;
+  stroke-dasharray: 6 5;
+  animation: archEdgeFlowSimple 0.8s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(255, 153, 0, 0.6));
+}
+.arch-svg-host .arch-packet {
+  fill: #ffd37a;
+  filter: drop-shadow(0 0 6px rgba(255, 215, 140, 0.95));
+}
+@keyframes archEdgeFlowSimple {
+  0%   { stroke-dashoffset: 22; }
+  100% { stroke-dashoffset: 0; }
+}
+
 /* Prefer crisp mono rendering inside terminal */
 .font-mono {
   font-variant-ligatures: none;
