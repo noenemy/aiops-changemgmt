@@ -136,19 +136,22 @@ def _actor_for_repo(repo: str) -> str:
 def _load_repo_memory(repo: str, limit: int = 5) -> str:
     """Return a short text summary of past sessions for this repo.
 
-    list_events requires a sessionId, so we list the most recent sessions for
-    the repo actor first, then pull a few events from each.
+    list_sessions returns entries in sessionId order, not chronological order,
+    so we pull a larger page and sort by createdAt before taking the top N.
+    Older-but-relevant review summaries (e.g. manually seeded history for
+    demo authors) stay visible even after many recent sessions accumulate.
     """
     try:
         actor = _actor_for_repo(repo)
         sess_resp = _memory_client.list_sessions(
-            memoryId=MEMORY_ID, actorId=actor, maxResults=limit,
+            memoryId=MEMORY_ID, actorId=actor, maxResults=100,
         )
         summaries = sess_resp.get("sessionSummaries", [])
         if not summaries:
             return ""
+        summaries.sort(key=lambda s: s.get("createdAt") or 0, reverse=True)
         lines = []
-        for s in summaries:
+        for s in summaries[:limit]:
             sid = s.get("sessionId")
             if not sid:
                 continue
@@ -160,7 +163,7 @@ def _load_repo_memory(repo: str, limit: int = 5) -> str:
                 for p in e.get("payload", []):
                     text = (p.get("conversational", {}) or {}).get("content", {}).get("text", "")
                     if text:
-                        lines.append(f"- [{ts}] {text[:300]}")
+                        lines.append(f"- [{ts}] {text[:500]}")
         return "\n".join(lines[:limit])
     except Exception as exc:
         logger.warning(f"Memory load skipped: {exc}")
