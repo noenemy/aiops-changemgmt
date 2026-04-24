@@ -36,7 +36,9 @@ help:
 # ------------------------------------------------------------
 .PHONY: dev-agent
 dev-agent: ## Redeploy the AgentCore Runtime (app.py, prompt, deps)
-	cd agent/runtime && AWS_PROFILE=$(PROFILE) agentcore deploy --auto-update-on-conflict \
+	@# Unset leaked static credentials so boto3 uses the chosen profile.
+	cd agent/runtime && env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_REGION \
+	  AWS_PROFILE=$(PROFILE) agentcore deploy --auto-update-on-conflict \
 	  --env GATEWAY_URL=$(GATEWAY_URL) \
 	  --env MEMORY_ID=$(MEMORY_ID) \
 	  --env BEDROCK_MODEL_ID=$(BEDROCK_MODEL) \

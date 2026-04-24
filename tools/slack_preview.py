@@ -28,10 +28,60 @@ SAMPLE = {
     "risk_score": 85,
     "risk_level": "CRITICAL",
     "verdict": "REJECT",
-    "summary": "TOCTOU race condition이 감지되었습니다. INC-0042와 동일 패턴. 프로덕션 배포 차단 권장.",
-    "issues_text": "🔴 *CRITICAL*: `get_item` 후 `update_item` 사이 race condition\n🟡 *MEDIUM*: 보상 트랜잭션 없음",
+    "summary": "재고 차감 로직에서 TOCTOU race condition이 감지됨. INC-0042와 동일 패턴으로 프로덕션 배포 차단 권장.",
+    "code_block": (
+        "# sample-app/src/handlers/create_order.py\n"
+        "    inventory = table.get_item(Key={'productId': product_id})\n"
+        "    stock = inventory['Item']['stockCount']\n"
+        "    if stock < quantity:\n"
+        "        return {'error': 'out of stock'}\n"
+        "-   table.update_item(\n"
+        "-       Key={'productId': product_id},\n"
+        "-       UpdateExpression='SET stockCount = stockCount - :q',\n"
+        "-       ConditionExpression='stockCount >= :q',\n"
+        "-       ExpressionAttributeValues={':q': quantity},\n"
+        "-   )\n"
+        "+   table.update_item(\n"
+        "+       Key={'productId': product_id},\n"
+        "+       UpdateExpression='SET stockCount = stockCount - :q',\n"
+        "+       ExpressionAttributeValues={':q': quantity},\n"
+        "+   )\n"
+        "    process_payment(order)  # TODO: implement"
+    ),
+    "issues": [
+        {
+            "severity": "CRITICAL",
+            "title": "TOCTOU Race Condition",
+            "line_range": "create_order.py L42-48",
+            "code": (
+                "table.update_item(\n"
+                "    Key={'productId': product_id},\n"
+                "    UpdateExpression='SET stockCount = stockCount - :q',\n"
+                "    ExpressionAttributeValues={':q': quantity},\n"
+                ")  # ConditionExpression 제거됨"
+            ),
+            "why": "get_item 후 update_item 사이 동시 요청이 들어오면 stockCount가 음수가 됨. Overselling 유발.",
+            "fix": "ConditionExpression='stockCount >= :q' 를 복원하고 ConditionalCheckFailedException을 잡아 재시도.",
+        },
+        {
+            "severity": "HIGH",
+            "title": "결제 실패 보상 트랜잭션 없음",
+            "line_range": "create_order.py L61",
+            "code": "process_payment(order)  # TODO: implement",
+            "why": "order 생성 후 결제 실패 시 재고가 복구되지 않고 주문이 CONFIRMED로 남음.",
+            "fix": "",
+        },
+    ],
     "incident_match": "INC-0042 (2026-01-15, P1, 2시간 다운타임, ₩12M 매출 손실)",
-    "developer_pattern": "dev-ethan: 최근 3 PR 중 2건 REJECT (보안·안정성)",
+    "incident_code": (
+        "# INC-0042 당시 동일 패턴\n"
+        "table.update_item(\n"
+        "    Key={'productId': pid},\n"
+        "    UpdateExpression='SET stockCount = stockCount - :q',\n"
+        "    ExpressionAttributeValues={':q': qty},\n"
+        ")"
+    ),
+    "developer_pattern": "sk88ee: 최근 3 PR 중 2건 REJECT (보안/안정성 반복).",
     "infra_impact": "",
     "agent_persona": "CodeReviewer → RiskJudge",
 }
@@ -42,14 +92,41 @@ VERDICT_LABELS = {
 }
 RISK_EMOJI = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴", "CRITICAL": "🔴"}
 CHANGE_TYPE_LABEL = {"code": "코드 리뷰", "iac": "인프라 변경", "mixed": "코드 + 인프라"}
+SEVERITY_EMOJI = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}
+
+
+def _risk_bar(score: int) -> str:
+    s = int(score or 0)
+    filled = max(0, min(10, round(s / 10)))
+    if s >= 81:
+        box = "🟥"
+    elif s >= 51:
+        box = "🟧"
+    elif s >= 21:
+        box = "🟨"
+    else:
+        box = "🟩"
+    return box * filled + "⬜" * (10 - filled)
 
 
 def build_ctx(overrides: dict) -> dict:
     ctx = {**SAMPLE, **overrides}
     ctx.setdefault("risk_emoji", RISK_EMOJI.get(ctx["risk_level"], "⚪"))
+    ctx.setdefault("risk_bar", _risk_bar(ctx.get("risk_score", 0)))
     ctx.setdefault("verdict_label", VERDICT_LABELS.get(ctx["verdict"], "—"))
     ctx.setdefault("change_type_label", CHANGE_TYPE_LABEL.get(ctx["change_type"], "변경"))
     ctx.setdefault("timestamp", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    # Enrich issues with severity_emoji
+    issues = ctx.get("issues") or []
+    if isinstance(issues, str):
+        try:
+            issues = json.loads(issues)
+        except Exception:
+            issues = []
+    for it in issues:
+        if isinstance(it, dict):
+            it.setdefault("severity_emoji", SEVERITY_EMOJI.get((it.get("severity") or "").upper(), "⚪"))
+    ctx["issues"] = issues
     return ctx
 
 
