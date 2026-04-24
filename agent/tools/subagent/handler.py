@@ -46,30 +46,65 @@ def _runtime():
     return _rt
 
 
+import base64
+import hashlib
+import hmac
+import time as _time
+
+
 def _call_webhook(url: str, secret: str, label: str, query: str,
                   context_text: str) -> dict:
-    """Call an external agent webhook. Provider schemas vary — we send our
-    canonical payload and return the raw reply for the main agent to summarize.
+    """Call the AIOps generic webhook (event-ai.us-east-1.api.aws/webhook/generic/<id>).
+
+    Required auth scheme:
+      - x-amzn-event-timestamp: ISO-8601 UTC to millisecond precision (...Z)
+      - x-amzn-event-signature: base64(HMAC-SHA256(secret, "<ts>:<body>"))
+
+    Required body schema (current — provider warns strict 400 is coming):
+      eventType     must be "incident"
+      incidentId    string
+      action        string (e.g. "created")
+      priority      LOW|MEDIUM|HIGH|CRITICAL
+      title         short line
+      description   long-form
+      service       string
+      timestamp     ISO-8601 UTC
     """
-    body = json.dumps({
-        "agent": label,
-        "query": query,
-        "context": context_text[:4000],
-    }).encode()
+    ts = _time.strftime("%Y-%m-%dT%H:%M:%S.000Z", _time.gmtime())
+    payload = {
+        "eventType": "incident",
+        "incidentId": f"{label.lower()}-{int(_time.time())}",
+        "action": "created",
+        "priority": "HIGH",
+        "title": f"{label} inquiry from AIOps ChangeMgmt agent",
+        "description": (
+            f"Query from the {label} sub-agent tool:\n"
+            f"{query[:1500]}\n\n---\nContext:\n{context_text[:2000]}"
+        ),
+        "service": "aiops-changemgmt",
+        "timestamp": ts,
+    }
+    body = json.dumps(payload).encode()
+    sig = base64.b64encode(
+        hmac.new(secret.encode(), f"{ts}:{body.decode()}".encode(),
+                 hashlib.sha256).digest()
+    ).decode() if secret else ""
     req = urllib.request.Request(
         url, data=body, method="POST",
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {secret}" if secret else "",
-            "X-Webhook-Secret": secret or "",
+            "x-amzn-event-timestamp": ts,
+            "x-amzn-event-signature": sig,
         },
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read().decode("utf8", errors="replace")[:4000]
-        return {"source": "webhook", "agent": label, "answer": raw}
+            status = resp.status
+        return {"source": "webhook", "agent": label,
+                "status": status, "answer": raw}
     except Exception as e:
-        # Fall through to stub so the agent still has *something* to cite.
+        # Fall through so the main agent still has something to cite.
         return {
             "source": "webhook_error",
             "agent": label,
