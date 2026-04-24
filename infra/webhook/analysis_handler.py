@@ -154,32 +154,26 @@ def handle_investigate(event: dict) -> dict:
         return {"status": "error", "message": "DEVOPS_WEBHOOK_URL not configured"}
 
     result = _post_devops_webhook(prompt, actor)
-    status_line = (
-        f"✅ DevOps Investigation Groups에 전송됨 (incident `{result['incident_id']}`, "
-        f"HTTP {result['status']})"
-        if 200 <= result["status"] < 300
-        else f"❌ 전송 실패 (HTTP {result['status']}): {result['body']}"
-    )
-    _post_slack(
-        [
-            {"type": "header", "text": {"type": "plain_text",
-                                        "text": "🔍 DevOps 조사 요청 접수"}},
-            {"type": "section", "fields": [
-                {"type": "mrkdwn", "text": f"*요청자:* {actor}"},
-                {"type": "mrkdwn", "text": f"*Incident ID:* `{result['incident_id']}`"},
-            ]},
-            {"type": "section",
-             "text": {"type": "mrkdwn", "text": f"*질문:*\n>{prompt}"}},
-            {"type": "section",
-             "text": {"type": "mrkdwn", "text": status_line}},
-            {"type": "context", "elements": [
-                {"type": "mrkdwn",
-                 "text": "조사 결과는 AI Ops Investigation Groups가 별도로 채널에 게시합니다."}
-            ]},
-        ],
-        f"/investigate from {actor}",
-        slack_token,
-    )
+    ok = 200 <= result["status"] < 300
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text",
+                                    "text": "🔍 DevOps 조사 요청 접수"}},
+        {"type": "section",
+         "text": {"type": "mrkdwn", "text": f"*요청자*  `{actor}`"}},
+        {"type": "section",
+         "text": {"type": "mrkdwn", "text": f"*질문*\n> {prompt}"}},
+    ]
+    if not ok:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn",
+                     "text": f"❌ 전송 실패 (HTTP {result['status']}): {result['body']}"},
+        })
+    blocks.append({"type": "context", "elements": [
+        {"type": "mrkdwn",
+         "text": "조사 결과는 AI Ops Investigation Groups가 별도로 채널에 게시합니다."}
+    ]})
+    _post_slack(blocks, f"/investigate from {actor}", slack_token)
     return {"status": "investigate_dispatched", "result": result}
 
 
