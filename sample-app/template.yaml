@@ -2,6 +2,14 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: AIOps Change Management - Sample Order Management App
 
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC that Lambda functions will attach to
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets for Lambda ENIs
+
 Globals:
   Function:
     Runtime: python3.13
@@ -12,8 +20,38 @@ Globals:
         ORDERS_TABLE: !Ref OrdersTable
         PRODUCTS_TABLE: !Ref ProductsTable
         INVENTORY_TABLE: !Ref InventoryTable
+    # Move Lambdas into the VPC so they can reach the RDS instance.
+    VpcConfig:
+      SecurityGroupIds:
+        - !Ref LambdaSecurityGroup
+      SubnetIds: !Ref PrivateSubnetIds
 
 Resources:
+  # Security group for all app Lambdas.
+  # NOTE: Egress is tightened to 10.0.0.0/8 (internal VPC CIDR) only.
+  # Reasoning from the PR author: "least privilege — internal traffic only".
+  # (VPC Endpoints for DynamoDB / Secrets Manager / STS are NOT provisioned.)
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: AIOps Lambda egress (locked down to internal CIDR)
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/8
+          Description: HTTPS to internal services only
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/8
+          Description: MySQL to RDS
+      SecurityGroupIngress: []
+      Tags:
+        - Key: Environment
+          Value: prod
+
   # API Gateway
   OrdersApi:
     Type: AWS::Serverless::Api
@@ -37,6 +75,7 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref OrdersTable
+        - VPCAccessPolicy: {}
 
   GetOrderFunction:
     Type: AWS::Serverless::Function
@@ -53,6 +92,7 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref OrdersTable
+        - VPCAccessPolicy: {}
 
   CreateOrderFunction:
     Type: AWS::Serverless::Function
@@ -71,6 +111,7 @@ Resources:
             TableName: !Ref OrdersTable
         - DynamoDBCrudPolicy:
             TableName: !Ref InventoryTable
+        - VPCAccessPolicy: {}
 
   GetProductsFunction:
     Type: AWS::Serverless::Function
@@ -87,6 +128,7 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref ProductsTable
+        - VPCAccessPolicy: {}
 
   # DynamoDB Tables
   OrdersTable:
