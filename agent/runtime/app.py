@@ -119,12 +119,23 @@ PR 유형에 따라 3개 Persona(CodeReviewer/InfraReviewer/RiskJudge)를 전환
 - 두 도구 호출이 끝나면 더 이상 도구를 호출하지 말고 한국어 최종 요약만 리턴한다.
 """
 
-FIX_PROMPT_SUFFIX = """
+INVESTIGATE_PROMPT_SUFFIX = """
 
-# 이번 호출은 /fix 명령
-- 기존 리뷰 이슈를 참조하여 구체적 수정안 제시
-- post_github_comment 시 본문 앞에 '## 🔧 AI Fix Suggestion' 헤더 추가
-- post_slack_report 시 template="command_fix" 필드 포함
+# 이번 호출은 /investigate 명령 — DevOpsInvestigator 페르소나 활성화
+- 이 호출의 목적은 새 PR 리뷰가 아니라, 운영 중 관측된 증상(장애·레이턴시·오류율 등)과
+  지정된 PR 변경이 인과관계가 있는지 조사하는 것이다.
+- 작업 순서:
+  1) get_pr_diff / get_pr_files 로 변경 요약 확보
+  2) query_knowledge_base 로 관련 runbook·incident 조회
+  3) invoke_devops_agent 를 반드시 호출하여 외부 DevOps Agent 의견 수렴
+     (실제 DevOps Agent 미연결 시 stub 응답이 오며, stub임을 리포트에 명시)
+  4) RiskJudge 대신 DevOpsInvestigator 관점으로 가설·증거·권고 액션을 기술
+- 출력 도구:
+  - post_github_comment 본문 앞에 '## 🔍 AI Investigation' 헤더
+  - post_slack_report 에 template="command_investigate" 포함.
+    Slack JSON 필수 필드 중 verdict 는 APPROVE/REJECT 대신 "INVESTIGATE" 허용.
+  - incident_match / incident_code 는 실제 관련성이 확인된 경우에만 채움.
+- DevOps Agent 응답이 stub 인 경우 summary 에 "(DevOps Agent 연결 대기 중 — stub 기반 추정)" 문구를 포함한다.
 """
 
 # --- Memory helpers ---
@@ -256,12 +267,13 @@ def invoke(payload, context=None):
 
     # Smoke test path
     if "prompt" in payload and "pr_number" not in payload:
-        return _run_agent(payload["prompt"], repo=None, session_id=None, is_fix=False)
+        return _run_agent(payload["prompt"], repo=None, session_id=None,
+                          is_investigate=False)
 
     pr_number = payload["pr_number"]
     repo = payload["repo"]
     command = payload.get("command", "analysis")
-    is_fix = command == "fix"
+    is_investigate = command == "investigate"
 
     # Session id derived from the gateway's runtime session if present
     session_id = (context or {}).get("session_id") if isinstance(context, dict) else None
@@ -280,14 +292,16 @@ def invoke(payload, context=None):
 위 정보를 바탕으로 System Prompt 의 작업 순서를 따라 PR을 분석하세요.
 """
 
-    answer = _run_agent(header, repo=repo, session_id=session_id, is_fix=is_fix)
+    answer = _run_agent(header, repo=repo, session_id=session_id,
+                        is_investigate=is_investigate)
     _record_session(repo, session_id, answer)
     return {"session_id": session_id, "answer": answer}
 
 
-def _run_agent(user_text: str, repo: str | None, session_id: str | None, is_fix: bool) -> str:
+def _run_agent(user_text: str, repo: str | None, session_id: str | None,
+               is_investigate: bool) -> str:
     model = BedrockModel(model_id=MODEL_ID, region_name=REGION)
-    system = SYSTEM_PROMPT + (FIX_PROMPT_SUFFIX if is_fix else "")
+    system = SYSTEM_PROMPT + (INVESTIGATE_PROMPT_SUFFIX if is_investigate else "")
 
     mcp_client = _build_mcp_client()
     with mcp_client:

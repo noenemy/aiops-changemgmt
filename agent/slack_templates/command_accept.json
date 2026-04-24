@@ -2,19 +2,19 @@
   "blocks": [
     {
       "type": "header",
-      "text": { "type": "plain_text", "text": "🔧 Fix 제안 완료 — PR #{{pr_number}}" }
+      "text": { "type": "plain_text", "text": "✅ 사람 승인 — PR #{{pr_number}}" }
     },
     {
       "type": "section",
       "fields": [
         { "type": "mrkdwn", "text": "*PR:* <{{pr_url}}|{{pr_title}}>" },
-        { "type": "mrkdwn", "text": "*Requested by:* {{actor}}" }
+        { "type": "mrkdwn", "text": "*Approved by:* {{actor}}" }
       ]
     },
     { "type": "divider" },
     {
       "type": "section",
-      "text": { "type": "mrkdwn", "text": "*제안 요약:*\n{{summary}}" }
+      "text": { "type": "mrkdwn", "text": "*메모:*\n{{summary}}" }
     },
     {{>sections/footer}}
   ]
