@@ -150,8 +150,8 @@ trigger-rollback: ## /rollback command
 	$(PY) tools/trigger.py rollback $(PR) --reason "$${REASON:-롤백 요청}" --actor $${ACTOR:-ethan} --profile $(PROFILE) --region $(REGION)
 
 .PHONY: trigger-investigate
-trigger-investigate: ## /investigate command — DevOpsInvestigator 페르소나
-	$(PY) tools/trigger.py investigate $(PR) --reason "$${REASON:-DevOps 조사}" --actor $${ACTOR:-ethan} --profile $(PROFILE) --region $(REGION)
+trigger-investigate: ## /investigate — free-form prompt (make trigger-investigate PROMPT="최근 배포 이슈 분석")
+	$(PY) tools/trigger.py investigate "$${PROMPT:-최근 배포된 것 중 문제가 있는지 분석해줘}" --actor $${ACTOR:-ethan} --profile $(PROFILE) --region $(REGION)
 
 # ------------------------------------------------------------
 # Slack template preview (local render, optional post)

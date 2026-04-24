@@ -5,7 +5,8 @@ Routes:
   - Slack Slash Commands:
       command=accept       → GitHub APPROVE review + auto-merge + Slack notice (no Agent)
       command=rollback     → open a revert PR against the target PR's merge commit + Slack notice
-      command=investigate  → AgentCore Runtime with DevOpsInvestigator persona
+      command=investigate  → forward the free-form prompt to the DevOps webhook
+                             (no PR lookup, no Runtime)
 
 All tools / KB / Memory run inside the AgentCore Runtime (see agent/runtime/).
 This Lambda only bridges transport and handles lightweight command branches.
@@ -14,9 +15,13 @@ Fallback: if AGENT_RUNTIME_ARN == "none" or InvokeAgentRuntime fails, a direct
 Bedrock model call with a simple prompt is used (no KB/DDB lookup).
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
+import time
 import urllib.request
 from datetime import datetime, timezone
 
@@ -41,6 +46,12 @@ SLACK_CHANNEL_ID = os.environ["SLACK_CHANNEL_ID"]
 GITHUB_REPO = os.environ["GITHUB_REPO"]
 AGENT_RUNTIME_ARN = os.environ["AGENT_RUNTIME_ARN"]
 BEDROCK_MODEL_ID = os.environ["BEDROCK_MODEL_ID"]
+
+# DevOps investigation webhook (fire-and-forget). "none" means unset.
+_dv_url = os.environ.get("DEVOPS_WEBHOOK_URL", "")
+_dv_sec = os.environ.get("DEVOPS_WEBHOOK_SECRET", "")
+DEVOPS_WEBHOOK_URL = "" if _dv_url in ("", "none") else _dv_url
+DEVOPS_WEBHOOK_SECRET = "" if _dv_sec in ("", "none") else _dv_sec
 
 _secrets_cache = {}
 
@@ -74,18 +85,102 @@ def invoke_runtime_for_analysis(pr_data: dict) -> str:
     return _invoke_runtime(payload, _session_id(pr_data["pr_number"]))
 
 
-def invoke_runtime_for_investigate(pr_data: dict) -> str:
-    payload = {
-        "command": "investigate",
-        "pr_number": pr_data["pr_number"],
-        "repo": GITHUB_REPO,
-        "pr_title": pr_data.get("pr_title", ""),
-        "pr_author": pr_data.get("pr_author", ""),
-        "pr_url": pr_data.get("pr_url", ""),
-        "actor": pr_data.get("actor", ""),
-        "reason": pr_data.get("reason", ""),
-    }
-    return _invoke_runtime(payload, _session_id(pr_data["pr_number"]))
+def _post_devops_webhook(prompt: str, actor: str) -> dict:
+    """Fire-and-forget call to the AIOps Investigation Groups webhook.
+
+    Schema (confirmed):
+      - Headers:  x-amzn-event-timestamp (ISO-8601 UTC ...Z)
+                  x-amzn-event-signature (base64 HMAC-SHA256(secret, "<ts>:<body>"))
+      - Body:     eventType:"incident", incidentId, action:"created", priority,
+                  title, description, service, timestamp
+    The remote side queues an investigation and posts its own updates to the
+    Slack channel this webhook is wired to — we never see the investigation
+    output here, only the acceptance ack.
+    """
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    iid = f"slack-investigate-{int(time.time())}"
+    short = prompt if len(prompt) <= 80 else prompt[:77] + "…"
+    body = json.dumps({
+        "eventType": "incident",
+        "incidentId": iid,
+        "action": "created",
+        "priority": "HIGH",
+        "title": f"/investigate from {actor or 'unknown'}: {short}",
+        "description": prompt,
+        "service": "aiops-changemgmt",
+        "timestamp": ts,
+    }).encode()
+    sig = base64.b64encode(
+        hmac.new(DEVOPS_WEBHOOK_SECRET.encode(),
+                 f"{ts}:{body.decode()}".encode(), hashlib.sha256).digest()
+    ).decode()
+    req = urllib.request.Request(
+        DEVOPS_WEBHOOK_URL, data=body, method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "x-amzn-event-timestamp": ts,
+            "x-amzn-event-signature": sig,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return {"status": resp.status,
+                    "body": resp.read().decode("utf8", errors="replace")[:500],
+                    "incident_id": iid}
+    except Exception as e:
+        return {"status": 0, "body": f"{type(e).__name__}: {e}",
+                "incident_id": iid}
+
+
+def handle_investigate(event: dict) -> dict:
+    """Hand the free-form prompt to the DevOps webhook. No PR, no Runtime."""
+    prompt = (event.get("prompt") or "").strip()
+    actor = event.get("actor", "unknown")
+    slack_token = get_secret(SLACK_TOKEN_SECRET_ARN)
+
+    if not DEVOPS_WEBHOOK_URL or not DEVOPS_WEBHOOK_SECRET:
+        _post_slack(
+            [
+                {"type": "header", "text": {"type": "plain_text",
+                                            "text": "🔍 DevOps 조사 요청"}},
+                {"type": "section", "text": {"type": "mrkdwn",
+                                             "text": f"*요청자:* {actor}\n*질문:*\n{prompt}"}},
+                {"type": "section", "text": {"type": "mrkdwn",
+                                             "text": "⚠️ DevOps webhook 미연결 — DEVOPS_WEBHOOK_URL 확인 필요"}},
+            ],
+            f"/investigate from {actor}",
+            slack_token,
+        )
+        return {"status": "error", "message": "DEVOPS_WEBHOOK_URL not configured"}
+
+    result = _post_devops_webhook(prompt, actor)
+    status_line = (
+        f"✅ DevOps Investigation Groups에 전송됨 (incident `{result['incident_id']}`, "
+        f"HTTP {result['status']})"
+        if 200 <= result["status"] < 300
+        else f"❌ 전송 실패 (HTTP {result['status']}): {result['body']}"
+    )
+    _post_slack(
+        [
+            {"type": "header", "text": {"type": "plain_text",
+                                        "text": "🔍 DevOps 조사 요청 접수"}},
+            {"type": "section", "fields": [
+                {"type": "mrkdwn", "text": f"*요청자:* {actor}"},
+                {"type": "mrkdwn", "text": f"*Incident ID:* `{result['incident_id']}`"},
+            ]},
+            {"type": "section",
+             "text": {"type": "mrkdwn", "text": f"*질문:*\n>{prompt}"}},
+            {"type": "section",
+             "text": {"type": "mrkdwn", "text": status_line}},
+            {"type": "context", "elements": [
+                {"type": "mrkdwn",
+                 "text": "조사 결과는 AI Ops Investigation Groups가 별도로 채널에 게시합니다."}
+            ]},
+        ],
+        f"/investigate from {actor}",
+        slack_token,
+    )
+    return {"status": "investigate_dispatched", "result": result}
 
 
 def _invoke_runtime(payload: dict, session_id: str) -> str:
@@ -395,16 +490,12 @@ def handler(event, context):
     if command == "rollback":
         return handle_rollback(event)
 
-    # --- Slack /investigate — AgentCore with DevOpsInvestigator persona ---
+    # --- Slack /investigate — free-form prompt, forward to DevOps webhook ---
     if command == "investigate":
-        if AGENT_RUNTIME_ARN == "none":
-            return {"status": "error",
-                    "message": "investigate requires Runtime (AGENT_RUNTIME_ARN=none)"}
         try:
-            invoke_runtime_for_investigate(event)
-            return {"pr_number": pr_number, "status": "investigation_started"}
+            return handle_investigate(event)
         except Exception as e:
-            logger.error(f"investigate pipeline failed: {e}", exc_info=True)
+            logger.error(f"investigate failed: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
     # --- Webhook event (no command) — full analysis via AgentCore Runtime ---

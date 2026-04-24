@@ -29,6 +29,15 @@ Parameters:
   EmbeddingModelArn:
     Type: String
     Default: arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0
+  DevOpsWebhookUrl:
+    Type: String
+    Default: ""
+    Description: AIOps Investigation Groups generic webhook URL for /investigate
+  DevOpsWebhookSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Shared secret used to sign x-amzn-event-signature
 
 Resources:
   # ============================================================
@@ -333,6 +342,8 @@ Resources:
           DEVELOPER_PROFILES_TABLE: !Ref DeveloperProfilesTable
           TEAM_STATS_TABLE: !Ref TeamStatsTable
           KNOWLEDGE_BASE_ID: !Ref KnowledgeBase
+          DEVOPS_WEBHOOK_URL: !Ref DevOpsWebhookUrl
+          DEVOPS_WEBHOOK_SECRET: !Ref DevOpsWebhookSecret
       Policies:
         - Version: '2012-10-17'
           Statement:

@@ -5,8 +5,11 @@ Lambda (on /accept /rollback /investigate) would send. Bypasses API Gateway
 + signature checks.
 
 Usage:
-  python tools/trigger.py <command> <pr_number> [--reason "..."] [--actor name]
+  python tools/trigger.py <command> <target> [--reason "..."] [--actor name]
                           [--sync] [--region us-east-1] [--profile new-account]
+
+  <target> = PR number for webhook/accept/rollback,
+             free-form prompt text for investigate.
 
 Examples:
   # Full webhook-equivalent pipeline (Agent + KB + Slack post)
@@ -18,11 +21,11 @@ Examples:
   # Slack /rollback — open a revert PR against a merged PR
   python tools/trigger.py rollback 12 --reason "프로덕션 이슈 감지"
 
-  # Slack /investigate — DevOpsInvestigator persona via AgentCore
-  python tools/trigger.py investigate 12 --reason "P99 레이턴시 급등"
+  # Slack /investigate — free-form prompt forwarded to DevOps webhook
+  python tools/trigger.py investigate "최근 배포된 것 중 문제가 있는지 분석해줘"
 
   # Wait for and print the Lambda response body (useful for debugging)
-  python tools/trigger.py investigate 12 --sync
+  python tools/trigger.py investigate "Orders API p99 급등 원인" --sync
 """
 
 from __future__ import annotations
@@ -110,9 +113,11 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("command",
                    choices=["webhook", "accept", "rollback", "investigate"],
-                   help="webhook = PR opened-style trigger; others = Slack commands")
-    p.add_argument("pr_number", type=int)
-    p.add_argument("--reason", default="", help="/reject rationale (ignored for others)")
+                   help="webhook/accept/rollback = PR-scoped; investigate = free-form prompt")
+    p.add_argument("target", nargs="?",
+                   help="PR number (webhook/accept/rollback) or "
+                        "free-form prompt (investigate)")
+    p.add_argument("--reason", default="", help="Slack-command reason field")
     p.add_argument("--actor", default="trigger-script", help="Slack user substitute")
     p.add_argument("--repo", default=DEFAULT_REPO)
     p.add_argument("--sync", action="store_true", help="Wait for Lambda and print response")
@@ -121,6 +126,24 @@ def main() -> int:
     args = p.parse_args()
 
     session = boto3.Session(profile_name=args.profile, region_name=args.region)
+
+    # /investigate doesn't reference a PR — the target arg is the prompt text.
+    if args.command == "investigate":
+        prompt = args.target or args.reason or ""
+        if not prompt:
+            p.error("investigate requires a prompt as the second argument")
+        payload = {"command": "investigate", "prompt": prompt, "actor": args.actor}
+        print(f"Invoking {FUNCTION_NAME} with command='investigate' ...")
+        invoke(session, payload, args.sync)
+        return 0
+
+    if args.target is None:
+        p.error(f"{args.command} requires a PR number")
+    try:
+        pr_number = int(args.target)
+    except ValueError:
+        p.error(f"PR number must be an int (got {args.target!r})")
+    args.pr_number = pr_number
 
     print(f"Fetching PR metadata for {args.repo}#{args.pr_number} ...")
     pr_meta = fetch_pr_meta(session, args.pr_number, args.repo)

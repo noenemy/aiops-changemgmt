@@ -6,7 +6,8 @@ acks within 3s, and invokes Analysis Lambda asynchronously.
 Expected Slash Commands:
   /accept     <PR_NUMBER> [note]    human-override an AI REJECT
   /rollback   <PR_NUMBER> [note]    open a revert PR for a previously-merged change
-  /investigate <PR_NUMBER> [note]   ask the DevOpsInvestigator persona to probe an incident
+  /investigate <free-form prompt>   hand the full prompt to the DevOps agent
+                                    webhook — no PR lookup, no runtime call
 
 The Slash Command URL should point to this Lambda's API Gateway endpoint.
 """
@@ -125,7 +126,7 @@ def handler(event, context):
 
     form = dict(urllib.parse.parse_qsl(raw_body))
     command = form.get("command", "")
-    text = form.get("text", "")
+    text = (form.get("text", "") or "").strip()
     user_id = form.get("user_id", "")
     user_name = form.get("user_name", "")
 
@@ -134,6 +135,33 @@ def handler(event, context):
     if command not in ALLOWED_COMMANDS:
         return ephemeral_response(f"Unsupported command: {command}")
 
+    # /investigate takes a free-form prompt, not a PR number.
+    if command == "/investigate":
+        if not text:
+            return ephemeral_response(
+                "사용법: `/investigate <조사 요청 내용>`\n"
+                "예: `/investigate 최근 배포된 것 중에 문제가 있는지 분석해줘`"
+            )
+        payload = {
+            "command": "investigate",
+            "prompt": text,
+            "actor": user_name or user_id,
+        }
+        try:
+            lambda_client.invoke(
+                FunctionName=ANALYSIS_FUNCTION_NAME,
+                InvocationType="Event",
+                Payload=json.dumps(payload),
+            )
+        except Exception as e:
+            logger.error(f"Failed to invoke analysis: {e}")
+            return ephemeral_response(f"요청 실패: {e}")
+        preview = text if len(text) <= 80 else text[:77] + "…"
+        return ephemeral_response(
+            f"🔍 DevOps 조사 요청 접수: _{preview}_\n결과는 곧 채널에 게시됩니다."
+        )
+
+    # /accept and /rollback still operate on a specific PR.
     pr_number, reason = parse_text(text)
     if pr_number is None:
         return ephemeral_response(f"사용법: `{command} <PR번호> [메모]`")
@@ -145,10 +173,9 @@ def handler(event, context):
         logger.error(f"Failed to fetch PR #{pr_number}: {e}")
         return ephemeral_response(f"PR #{pr_number} 조회 실패: {e}")
 
-    # Invoke Analysis Lambda async with command flag
     payload = {
         **pr_meta,
-        "command": command.lstrip("/"),  # "accept" / "rollback" / "investigate"
+        "command": command.lstrip("/"),  # "accept" / "rollback"
         "reason": reason,
         "actor": user_name or user_id,
     }
@@ -163,10 +190,8 @@ def handler(event, context):
         logger.error(f"Failed to invoke analysis: {e}")
         return ephemeral_response(f"요청 실패: {e}")
 
-    # 3-second ack
     labels = {
-        "/accept":      f"✅ PR #{pr_number} — 사람 승인 처리 중입니다. 결과는 곧 채널에 게시됩니다.",
-        "/rollback":    f"⏪ PR #{pr_number} — 롤백 PR 생성 중입니다. 결과는 곧 채널에 게시됩니다.",
-        "/investigate": f"🔍 PR #{pr_number} — DevOpsInvestigator 에이전트가 조사에 착수했습니다.",
+        "/accept":   f"✅ PR #{pr_number} — 사람 승인 처리 중입니다. 결과는 곧 채널에 게시됩니다.",
+        "/rollback": f"⏪ PR #{pr_number} — 롤백 PR 생성 중입니다. 결과는 곧 채널에 게시됩니다.",
     }
     return ephemeral_response(labels[command])
