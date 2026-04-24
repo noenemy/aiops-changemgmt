@@ -1,0 +1,24 @@
+{
+  "blocks": [
+    {{>sections/pr_header}},
+    {{>sections/pr_fields}},
+    { "type": "divider" },
+    {
+      "type": "section",
+      "text": { "type": "mrkdwn", "text": "🔍 *DevOps 조사 요약*\n{{summary}}" }
+    }
+    {{#if code_block}},
+    {{>sections/code_block}}
+    {{/if}}
+    {{#each issues}}
+    ,{ "type": "divider" },
+    {{>sections/issue_item}}
+    {{/each}}
+    {{#if incident_code}}
+    ,{ "type": "divider" },
+    {{>sections/incident_code}}
+    {{/if}}
+    ,{ "type": "divider" },
+    {{>sections/footer}}
+  ]
+}

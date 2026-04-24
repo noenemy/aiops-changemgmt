@@ -82,7 +82,11 @@ dev-tools: sync-common ## Rebuild + redeploy all 5 Tool Lambdas
 	    GitHubRepo=$(REPO) \
 	    KnowledgeBaseId=$$($(AWS) cloudformation describe-stacks --stack-name aiops-changemgmt-infra --query "Stacks[0].Outputs[?OutputKey=='KnowledgeBaseId'].OutputValue" --output text) \
 	    ReviewHistoryTableName=$$($(AWS) cloudformation describe-stacks --stack-name aiops-changemgmt-infra --query "Stacks[0].Outputs[?OutputKey=='ReviewHistoryTableName'].OutputValue" --output text) \
-	    DeveloperProfilesTableName=$$($(AWS) cloudformation describe-stacks --stack-name aiops-changemgmt-infra --query "Stacks[0].Outputs[?OutputKey=='DeveloperProfilesTableName'].OutputValue" --output text)
+	    DeveloperProfilesTableName=$$($(AWS) cloudformation describe-stacks --stack-name aiops-changemgmt-infra --query "Stacks[0].Outputs[?OutputKey=='DeveloperProfilesTableName'].OutputValue" --output text) \
+	    DevOpsWebhookUrl="$${DEVOPS_WEBHOOK_URL:-none}" \
+	    DevOpsWebhookSecret="$${DEVOPS_WEBHOOK_SECRET:-none}" \
+	    SecurityWebhookUrl="$${SECURITY_WEBHOOK_URL:-none}" \
+	    SecurityWebhookSecret="$${SECURITY_WEBHOOK_SECRET:-none}"
 
 .PHONY: dev-slack-tools
 dev-slack-tools: sync-common ## Redeploy only the slack_tools Lambda (faster)
@@ -137,17 +141,17 @@ dedup-clear: ## Purge the tool-dedup table (run between test runs)
 trigger: ## Run the webhook-style trigger (make trigger PR=9)
 	$(PY) tools/trigger.py webhook $(PR) --profile $(PROFILE) --region $(REGION)
 
-.PHONY: trigger-analysis
-trigger-analysis: ## /analysis command
-	$(PY) tools/trigger.py analysis $(PR) --profile $(PROFILE) --region $(REGION)
+.PHONY: trigger-accept
+trigger-accept: ## /accept command (pass REASON=... ACTOR=...)
+	$(PY) tools/trigger.py accept $(PR) --reason "$${REASON:-사람 승인}" --actor $${ACTOR:-ethan} --profile $(PROFILE) --region $(REGION)
 
-.PHONY: trigger-reject
-trigger-reject: ## /reject command (pass REASON=... ACTOR=...)
-	$(PY) tools/trigger.py reject $(PR) --reason "$${REASON:-수동 REJECT}" --actor $${ACTOR:-ethan} --profile $(PROFILE) --region $(REGION)
+.PHONY: trigger-rollback
+trigger-rollback: ## /rollback command
+	$(PY) tools/trigger.py rollback $(PR) --reason "$${REASON:-롤백 요청}" --actor $${ACTOR:-ethan} --profile $(PROFILE) --region $(REGION)
 
-.PHONY: trigger-fix
-trigger-fix: ## /fix command
-	$(PY) tools/trigger.py fix $(PR) --profile $(PROFILE) --region $(REGION)
+.PHONY: trigger-investigate
+trigger-investigate: ## /investigate command — DevOpsInvestigator 페르소나
+	$(PY) tools/trigger.py investigate $(PR) --reason "$${REASON:-DevOps 조사}" --actor $${ACTOR:-ethan} --profile $(PROFILE) --region $(REGION)
 
 # ------------------------------------------------------------
 # Slack template preview (local render, optional post)

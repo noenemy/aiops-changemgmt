@@ -1,7 +1,8 @@
 """Manually trigger the analysis Lambda for a real GitHub PR.
 
-Simulates what the webhook Lambda (on PR opened/sync) or the slack-command Lambda
-(on /analysis /reject /fix) would send. Bypasses API Gateway + signature checks.
+Simulates what the webhook Lambda (on PR opened/sync) or the slack-command
+Lambda (on /accept /rollback /investigate) would send. Bypasses API Gateway
++ signature checks.
 
 Usage:
   python tools/trigger.py <command> <pr_number> [--reason "..."] [--actor name]
@@ -11,17 +12,17 @@ Examples:
   # Full webhook-equivalent pipeline (Agent + KB + Slack post)
   python tools/trigger.py webhook 12
 
-  # Slack /analysis — same flow as webhook but logged as a command re-run
-  python tools/trigger.py analysis 12
+  # Slack /accept — APPROVE review + auto-merge (no Agent)
+  python tools/trigger.py accept 12 --reason "보안 체크 끝, 수동 승인" --actor ethan
 
-  # Slack /reject — skips the agent, posts REJECT comment + Slack message
-  python tools/trigger.py reject 12 --reason "보안 재검토 필요" --actor ethan
+  # Slack /rollback — open a revert PR against a merged PR
+  python tools/trigger.py rollback 12 --reason "프로덕션 이슈 감지"
 
-  # Slack /fix — AgentCore Runtime Fix pipeline
-  python tools/trigger.py fix 12
+  # Slack /investigate — DevOpsInvestigator persona via AgentCore
+  python tools/trigger.py investigate 12 --reason "P99 레이턴시 급등"
 
   # Wait for and print the Lambda response body (useful for debugging)
-  python tools/trigger.py analysis 12 --sync
+  python tools/trigger.py investigate 12 --sync
 """
 
 from __future__ import annotations
@@ -64,6 +65,8 @@ def fetch_pr_meta(session: boto3.Session, pr_number: int, repo: str) -> dict:
         "head_branch": pr["head"]["ref"],
         "base_branch": pr["base"]["ref"],
         "repo_full_name": pr["base"]["repo"]["full_name"],
+        "merge_commit_sha": pr.get("merge_commit_sha") or "",
+        "merged": bool(pr.get("merged")),
     }
 
 
@@ -105,7 +108,8 @@ def invoke(session: boto3.Session, payload: dict, sync: bool) -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("command", choices=["webhook", "analysis", "reject", "fix"],
+    p.add_argument("command",
+                   choices=["webhook", "accept", "rollback", "investigate"],
                    help="webhook = PR opened-style trigger; others = Slack commands")
     p.add_argument("pr_number", type=int)
     p.add_argument("--reason", default="", help="/reject rationale (ignored for others)")

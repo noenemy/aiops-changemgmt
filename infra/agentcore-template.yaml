@@ -21,6 +21,24 @@ Parameters:
     Type: String
   DeveloperProfilesTableName:
     Type: String
+  DevOpsWebhookUrl:
+    Type: String
+    Default: ""
+    Description: Optional generic webhook for the DevOps sub-agent
+  DevOpsWebhookSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Bearer/secret token for the DevOps webhook
+  SecurityWebhookUrl:
+    Type: String
+    Default: ""
+    Description: Optional generic webhook for the Security sub-agent
+  SecurityWebhookSecret:
+    Type: String
+    Default: ""
+    NoEcho: true
+    Description: Bearer/secret token for the Security webhook
 
 Resources:
   # ============================================================
@@ -183,6 +201,10 @@ Resources:
         Variables:
           DEVOPS_RUNTIME_ARN: ""
           SECURITY_RUNTIME_ARN: ""
+          DEVOPS_WEBHOOK_URL: !Ref DevOpsWebhookUrl
+          DEVOPS_WEBHOOK_SECRET: !Ref DevOpsWebhookSecret
+          SECURITY_WEBHOOK_URL: !Ref SecurityWebhookUrl
+          SECURITY_WEBHOOK_SECRET: !Ref SecurityWebhookSecret
 
 Outputs:
   MemoryId:

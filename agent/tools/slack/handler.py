@@ -69,8 +69,8 @@ def _enrich_issues(raw):
     return out
 
 
-_KNOWN_TEMPLATES = {"code_review", "infra_review", "command_analysis",
-                    "command_reject", "command_fix"}
+_KNOWN_TEMPLATES = {"code_review", "infra_review",
+                    "command_accept", "command_rollback", "command_investigate"}
 
 
 def post_slack_report(report_json: str) -> str:
@@ -83,8 +83,13 @@ def post_slack_report(report_json: str) -> str:
 
     ctx.setdefault("risk_emoji", _risk_emoji(ctx.get("risk_level", "LOW")))
     ctx.setdefault("risk_bar", _risk_bar(ctx.get("risk_score", 0)))
-    ctx.setdefault("verdict_label",
-                   "✅ CI/CD 자동 실행" if ctx.get("verdict") == "APPROVE" else "🚫 CI/CD 파이프라인 스킵")
+    verdict = ctx.get("verdict", "")
+    if verdict == "APPROVE":
+        ctx.setdefault("verdict_label", "✅ CI/CD 자동 실행")
+    elif verdict == "INVESTIGATE":
+        ctx.setdefault("verdict_label", "🔍 DevOps 조사 진행")
+    else:
+        ctx.setdefault("verdict_label", "🚫 CI/CD 파이프라인 스킵")
     ctx.setdefault("change_type_label", _change_type_label(ctx.get("change_type", "code")))
     ctx.setdefault("timestamp", datetime.now(timezone.utc).isoformat(timespec="seconds"))
     ctx["issues"] = _enrich_issues(ctx.get("issues"))
