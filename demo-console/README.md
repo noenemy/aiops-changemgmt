@@ -24,9 +24,24 @@
 - **Node.js 18+** (개발 환경에서 검증한 버전: Node 23)
 - **npm** (또는 pnpm/yarn로 교체 가능)
 - 실제(live) 모드를 쓸 경우에만 추가로:
-  - `gh` CLI 로그인 (`gh auth status`)
-  - 저장소 루트의 `./demo.sh` 실행 권한
-  - AWS 프로파일 (`demo.sh` 내부에서 사용하지 않지만, 병행 Makefile 타겟을 쓸 경우)
+  - **Python 3.10+** (라이브 모드는 `tools/demo_run.py`를 실행)
+  - **Python 패키지** `boto3` — `python3 -m pip install --user boto3`
+  - **AWS 프로파일 `new-account`** 가 `~/.aws/credentials`에 설정되어 있고, 데모 계정에 접근 가능할 것
+    ```bash
+    aws configure --profile new-account
+    # AWS Access Key ID:     <데모 계정 액세스 키>
+    # AWS Secret Access Key: <데모 계정 시크릿 키>
+    # Default region name:   us-east-1
+    # Default output format: json
+    ```
+    프로파일 이름을 바꾸고 싶으면 `AWS_PROFILE` 환경변수를 demo-console 실행 전에 export 하면 됩니다.
+    ```bash
+    AWS_PROFILE=my-profile npm run dev
+    ```
+  - **Secrets Manager**의 GitHub 토큰 시크릿 접근 권한 (`aiops-changemgmt-infra/github-token-...`)
+  - **Lambda Invoke 권한** (`aiops-changemgmt-infra-analysis`)
+
+> 라이브 모드 없이 녹화만 할 거면 위 Python/AWS 요구사항은 전부 건너뛰어도 됩니다. 연출(scripted) 모드는 로컬 Node 환경만 있으면 동작합니다.
 
 ### 설치 & 실행
 
@@ -137,6 +152,12 @@ npm run start    # http://localhost:3001
    make dedup-clear                 # 선택: 이전 실행의 dedup 흔적 제거
    make pr-clean PR=<num>           # 선택: AI 코멘트 정리
    ```
+5. **AWS 자격증명 사전 확인** (실제 모드를 쓸 경우)
+   ```bash
+   AWS_PROFILE=new-account aws sts get-caller-identity --query Account --output text
+   # → 336093158955 (데모 계정) 이 나오면 OK
+   python3 -c "import boto3"        # 조용히 끝나면 OK
+   ```
 
 ### 녹화 흐름 제안
 
@@ -158,8 +179,10 @@ npm run start    # http://localhost:3001
 | 증상 | 원인 | 대응 |
 |---|---|---|
 | 브라우저에서 페이지가 안 뜸 | 포트 3001 충돌 | `lsof -i :3001`로 기존 프로세스 종료 후 재실행 |
-| 실행 모드에서 `연결 오류` | `/api/run` 실행 실패 — 대개 cwd가 잘못됨 | `demo-console/`에서 `npm run dev` 실행했는지 확인 (저장소 루트 기준 `./demo.sh` 접근 필요) |
-| 실행 모드에서 `./demo.sh` 실패 | `gh` 미인증 또는 브랜치 없음 | 저장소 루트에서 `./demo.sh list`로 먼저 검증 |
+| 실행 모드에서 `연결 오류` | `/api/run` 실행 실패 — 대개 cwd가 잘못됨 | `demo-console/`에서 `npm run dev` 실행했는지 확인 (저장소 루트 기준 `tools/demo_run.py` 접근 필요) |
+| 실행 모드에서 `ModuleNotFoundError: No module named 'boto3'` | `tools/demo_run.py`가 의존하는 Python 패키지 미설치 | `python3 -m pip install --user boto3` 후 dev 서버 재시작 |
+| 실행 모드에서 `ProfileNotFound: The config profile (new-account) could not be found` | AWS 프로파일 미설정 | 사전 요구사항대로 `aws configure --profile new-account` 또는 `AWS_PROFILE=<기존프로파일> npm run dev` |
+| 실행 모드에서 `AccessDenied` (Secrets Manager / Lambda) | 프로파일은 있지만 데모 계정이 아니거나 권한 부족 | `AWS_PROFILE=<name> aws sts get-caller-identity`로 계정 확인 (`336093158955` 여야 함) |
 | 다이어그램 하이라이트가 안 움직임 | 브라우저 캐시에 구버전 SVG | 하드 리로드 (Cmd+Shift+R) |
 | 연출 모드 타이밍이 너무 빠름 | 시나리오 스크립트의 `wait.durationMs` 부족 | `src/data/scenarios.ts`에서 `wait` 블록의 시간 늘리기 |
 | 실행 모드 진행 바가 실제 진행과 어긋남 | `liveCommand.expectedSeconds`가 부정확 | 시나리오 파일에서 실제 소요 시간에 맞춰 조정 |

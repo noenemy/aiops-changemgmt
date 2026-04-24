@@ -128,7 +128,7 @@ aiops-changemgmt/
 부스/영상 녹화용 Next.js 웹 콘솔. 시나리오 설명, 활성 경로가 하이라이트되는 아키텍처 다이어그램, 터미널 뷰, Slack 리포트 미리보기를 한 화면에 묶어 보여줍니다.
 
 - **연출(scripted) 모드**: 미리 정의된 시나리오 출력을 타이핑 애니메이션으로 재생. 네트워크/AWS 크레덴셜 없이 동작.
-- **실제(live) 모드**: 브라우저에서 `./demo.sh run <id>`를 실제로 트리거하고 stdout을 SSE로 스트리밍.
+- **실제(live) 모드**: 브라우저에서 `tools/demo_run.py`를 실제로 트리거하고 stdout을 SSE로 스트리밍. Python `boto3` + AWS 프로파일(`new-account` 기본, `AWS_PROFILE`로 변경 가능)이 필요합니다.
 
 ```bash
 cd demo-console
