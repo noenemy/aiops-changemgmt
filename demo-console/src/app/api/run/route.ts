@@ -14,6 +14,8 @@ import path from "node:path";
 
 import { scenarios } from "@/data/scenarios";
 
+const DEMO_RUN_SCRIPT = "tools/demo_run.py";
+
 export const runtime = "nodejs";
 // Disable caching — each run is a fresh stream.
 export const dynamic = "force-dynamic";
@@ -66,7 +68,15 @@ export async function GET(req: Request) {
 
       const child = spawn(cmd, args, {
         cwd: workingDir,
-        env: process.env,
+        env: {
+          ...process.env,
+          // tools/demo_run.py pulls the GitHub token from Secrets Manager
+          // via this profile. Override with DEMO_AWS_PROFILE in .env.local
+          // if needed.
+          AWS_PROFILE: process.env.DEMO_AWS_PROFILE ?? process.env.AWS_PROFILE ?? "new-account",
+          AWS_REGION: process.env.DEMO_AWS_REGION ?? process.env.AWS_REGION ?? "us-east-1",
+          PYTHONUNBUFFERED: "1",
+        },
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -114,5 +124,68 @@ export async function GET(req: Request) {
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
     },
+  });
+}
+
+// ── POST: close the demo PR for a scenario ─────────────────────────────
+// Invoked by the Reset button in live mode so a subsequent Run can actually
+// create a new PR (GitHub refuses a second open PR on the same head branch).
+export async function POST(req: Request) {
+  const url = new URL(req.url);
+  const scenarioId = url.searchParams.get("scenario") ?? "";
+  const action = url.searchParams.get("action") ?? "reset";
+  const scenario = scenarios.find((s) => s.id === scenarioId);
+  if (!scenario) {
+    return Response.json(
+      { ok: false, message: `Unknown scenario: ${scenarioId}` },
+      { status: 400 },
+    );
+  }
+  if (action !== "reset") {
+    return Response.json(
+      { ok: false, message: `Unsupported action: ${action}` },
+      { status: 400 },
+    );
+  }
+
+  const { stdout, stderr, code } = await runPython([
+    DEMO_RUN_SCRIPT,
+    "reset",
+    scenarioId,
+  ]);
+  return Response.json(
+    { ok: code === 0, exitCode: code, stdout, stderr },
+    { status: code === 0 ? 200 : 500 },
+  );
+}
+
+function runPython(args: string[]): Promise<{
+  stdout: string;
+  stderr: string;
+  code: number;
+}> {
+  return new Promise((resolve) => {
+    const child = spawn("python3", args, {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        AWS_PROFILE:
+          process.env.DEMO_AWS_PROFILE ?? process.env.AWS_PROFILE ?? "new-account",
+        AWS_REGION:
+          process.env.DEMO_AWS_REGION ?? process.env.AWS_REGION ?? "us-east-1",
+        PYTHONUNBUFFERED: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (c: Buffer) => (stdout += c.toString("utf8")));
+    child.stderr.on("data", (c: Buffer) => (stderr += c.toString("utf8")));
+    child.on("error", (err) => {
+      resolve({ stdout, stderr: stderr + String(err), code: -1 });
+    });
+    child.on("close", (code) => {
+      resolve({ stdout, stderr, code: code ?? -1 });
+    });
   });
 }
