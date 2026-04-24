@@ -1,12 +1,12 @@
 """Slack Slash Command receiver.
 
-Verifies Slack signature, parses command (/analysis, /reject, /fix),
+Verifies Slack signature, parses command (/accept, /rollback, /investigate),
 acks within 3s, and invokes Analysis Lambda asynchronously.
 
 Expected Slash Commands:
-  /analysis <PR_NUMBER>
-  /reject   <PR_NUMBER> [reason]
-  /fix      <PR_NUMBER>
+  /accept     <PR_NUMBER> [note]    human-override an AI REJECT
+  /rollback   <PR_NUMBER> [note]    open a revert PR for a previously-merged change
+  /investigate <PR_NUMBER> [note]   ask the DevOpsInvestigator persona to probe an incident
 
 The Slash Command URL should point to this Lambda's API Gateway endpoint.
 """
@@ -36,7 +36,7 @@ GITHUB_TOKEN_SECRET_ARN = os.environ["GITHUB_TOKEN_SECRET_ARN"]
 
 _secrets_cache = {}
 
-ALLOWED_COMMANDS = {"/analysis", "/reject", "/fix"}
+ALLOWED_COMMANDS = {"/accept", "/rollback", "/investigate"}
 
 
 def get_secret(arn: str) -> str:
@@ -85,6 +85,8 @@ def fetch_pr_meta(pr_number: int) -> dict:
         "head_branch": pr["head"]["ref"],
         "base_branch": pr["base"]["ref"],
         "repo_full_name": pr["base"]["repo"]["full_name"],
+        "merge_commit_sha": pr.get("merge_commit_sha") or "",
+        "merged": bool(pr.get("merged")),
     }
 
 
@@ -134,9 +136,7 @@ def handler(event, context):
 
     pr_number, reason = parse_text(text)
     if pr_number is None:
-        return ephemeral_response(
-            f"사용법: `{command} <PR번호>`" + (" [사유]" if command == "/reject" else "")
-        )
+        return ephemeral_response(f"사용법: `{command} <PR번호> [메모]`")
 
     # Fetch PR metadata
     try:
@@ -148,7 +148,7 @@ def handler(event, context):
     # Invoke Analysis Lambda async with command flag
     payload = {
         **pr_meta,
-        "command": command.lstrip("/"),  # "analysis" / "reject" / "fix"
+        "command": command.lstrip("/"),  # "accept" / "rollback" / "investigate"
         "reason": reason,
         "actor": user_name or user_id,
     }
@@ -161,12 +161,12 @@ def handler(event, context):
         )
     except Exception as e:
         logger.error(f"Failed to invoke analysis: {e}")
-        return ephemeral_response(f"분석 요청 실패: {e}")
+        return ephemeral_response(f"요청 실패: {e}")
 
-    # 3초 내 ack
+    # 3-second ack
     labels = {
-        "/analysis": f"🔍 PR #{pr_number} 재분석을 시작했습니다. 결과는 곧 채널에 게시됩니다.",
-        "/reject":   f"🚫 PR #{pr_number}에 REJECT 코멘트를 게시 중입니다.",
-        "/fix":      f"🔧 PR #{pr_number}에 대한 Fix 제안을 생성 중입니다.",
+        "/accept":      f"✅ PR #{pr_number} — 사람 승인 처리 중입니다. 결과는 곧 채널에 게시됩니다.",
+        "/rollback":    f"⏪ PR #{pr_number} — 롤백 PR 생성 중입니다. 결과는 곧 채널에 게시됩니다.",
+        "/investigate": f"🔍 PR #{pr_number} — DevOpsInvestigator 에이전트가 조사에 착수했습니다.",
     }
     return ephemeral_response(labels[command])

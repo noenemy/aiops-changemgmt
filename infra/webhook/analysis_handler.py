@@ -3,9 +3,9 @@
 Routes:
   - GitHub Webhook (PR opened/synchronized) → AgentCore Runtime full pipeline
   - Slack Slash Commands:
-      command=analysis → AgentCore Runtime full pipeline (same as webhook)
-      command=reject   → skip Agent, post GitHub comment + Slack msg directly
-      command=fix      → AgentCore Runtime Fix pipeline
+      command=accept       → GitHub APPROVE review + auto-merge + Slack notice (no Agent)
+      command=rollback     → open a revert PR against the target PR's merge commit + Slack notice
+      command=investigate  → AgentCore Runtime with DevOpsInvestigator persona
 
 All tools / KB / Memory run inside the AgentCore Runtime (see agent/runtime/).
 This Lambda only bridges transport and handles lightweight command branches.
@@ -74,15 +74,16 @@ def invoke_runtime_for_analysis(pr_data: dict) -> str:
     return _invoke_runtime(payload, _session_id(pr_data["pr_number"]))
 
 
-def invoke_runtime_for_fix(pr_data: dict) -> str:
+def invoke_runtime_for_investigate(pr_data: dict) -> str:
     payload = {
-        "command": "fix",
+        "command": "investigate",
         "pr_number": pr_data["pr_number"],
         "repo": GITHUB_REPO,
         "pr_title": pr_data.get("pr_title", ""),
         "pr_author": pr_data.get("pr_author", ""),
         "pr_url": pr_data.get("pr_url", ""),
         "actor": pr_data.get("actor", ""),
+        "reason": pr_data.get("reason", ""),
     }
     return _invoke_runtime(payload, _session_id(pr_data["pr_number"]))
 
@@ -104,57 +105,33 @@ def _invoke_runtime(payload: dict, session_id: str) -> str:
 
 
 # ============================================================
-# /reject (no Agent — direct posting)
+# GitHub REST helpers
 # ============================================================
 
-def handle_reject(pr_data: dict) -> dict:
-    pr_number = pr_data["pr_number"]
-    reason = pr_data.get("reason", "") or "수동 거부 (사유 미기재)"
-    actor = pr_data.get("actor", "unknown")
-
-    github_token = get_secret(GITHUB_TOKEN_SECRET_ARN)
-    slack_token = get_secret(SLACK_TOKEN_SECRET_ARN)
-
-    # GitHub comment
-    comment = (
-        f"## 🚫 수동 REJECT\n\n"
-        f"이 PR은 `@{actor}`에 의해 수동으로 거부되었습니다.\n\n"
-        f"### 사유\n{reason}\n\n"
-        f"---\n*Issued via `/reject` Slack command*"
+def _gh(path: str, token: str, method: str = "GET", body: dict | None = None,
+        media_type: str = "application/vnd.github.v3+json") -> dict | list | str:
+    url = f"https://api.github.com{path}"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode() if body else None,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": media_type,
+            "Content-Type": "application/json",
+            "User-Agent": "AIOps-ChangeManagement",
+        },
     )
-    _post_github_comment(pr_number, comment, github_token)
-
-    # Slack notification (command_reject template rendered by Action Group Lambda)
-    # We POST directly here to avoid invoking Agent just for a notice.
-    blocks = [
-        {"type": "header", "text": {"type": "plain_text",
-                                    "text": f"🚫 수동 REJECT — PR #{pr_number}"}},
-        {"type": "section", "fields": [
-            {"type": "mrkdwn", "text": f"*PR:* <{pr_data['pr_url']}|{pr_data['pr_title']}>"},
-            {"type": "mrkdwn", "text": f"*Rejected by:* {actor}"},
-        ]},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*사유:*\n{reason}"}},
-        {"type": "divider"},
-        {"type": "context", "elements": [
-            {"type": "mrkdwn",
-             "text": f"🤖 RiskJudge · {datetime.now(timezone.utc).isoformat(timespec='seconds')}"}
-        ]},
-    ]
-    _post_slack(blocks, f"PR #{pr_number} REJECT by {actor}", slack_token)
-
-    return {"pr_number": pr_number, "status": "rejected", "actor": actor}
+    with urllib.request.urlopen(req) as resp:
+        raw = resp.read()
+    if media_type == "application/vnd.github.v3.diff":
+        return raw.decode()
+    return json.loads(raw) if raw else {}
 
 
 def _post_github_comment(pr_number: int, body: str, token: str):
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/issues/{pr_number}/comments"
-    data = json.dumps({"body": body}).encode()
-    req = urllib.request.Request(url, data=data, method="POST", headers={
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github.v3+json",
-        "Content-Type": "application/json",
-        "User-Agent": "AIOps-ChangeManagement",
-    })
-    urllib.request.urlopen(req)
+    _gh(f"/repos/{GITHUB_REPO}/issues/{pr_number}/comments",
+        token, method="POST", body={"body": body})
 
 
 def _post_slack(blocks: list, fallback: str, token: str):
@@ -178,6 +155,169 @@ def _post_slack(blocks: list, fallback: str, token: str):
 
 
 # ============================================================
+# /accept — human override of an AI REJECT (no Agent)
+# ============================================================
+
+def handle_accept(pr_data: dict) -> dict:
+    """Post APPROVE review, merge the PR, and notify Slack.
+
+    Best-effort merge: if GitHub refuses (branch protection, conflicts, draft),
+    we still keep the APPROVE review and leave a Slack note explaining why.
+    """
+    pr_number = pr_data["pr_number"]
+    note = pr_data.get("reason", "").strip()
+    actor = pr_data.get("actor", "unknown")
+    github_token = get_secret(GITHUB_TOKEN_SECRET_ARN)
+    slack_token = get_secret(SLACK_TOKEN_SECRET_ARN)
+
+    review_body = (
+        f"## ✅ 사람 승인 (AI REJECT 덮어쓰기)\n\n"
+        f"`@{actor}` 님이 AI 판정과 별개로 이 PR을 직접 승인했습니다.\n\n"
+        + (f"### 메모\n{note}\n\n" if note else "")
+        + f"---\n*Issued via `/accept` Slack command*"
+    )
+    # APPROVE review
+    try:
+        _gh(f"/repos/{GITHUB_REPO}/pulls/{pr_number}/reviews",
+            github_token, method="POST",
+            body={"event": "APPROVE", "body": review_body})
+    except Exception as e:
+        logger.warning(f"APPROVE review failed: {e}")
+
+    # Attempt auto-merge
+    merge_note = ""
+    try:
+        _gh(f"/repos/{GITHUB_REPO}/pulls/{pr_number}/merge",
+            github_token, method="PUT",
+            body={"merge_method": "squash",
+                  "commit_title": f"[human-approve] {pr_data.get('pr_title', '')} (#{pr_number})"})
+        merge_note = "자동 머지 완료 — CI/CD가 곧 실행됩니다."
+    except Exception as e:
+        merge_note = f"자동 머지 실패 ({type(e).__name__}) — 브랜치 보호 설정 확인이 필요합니다."
+        logger.warning(f"auto-merge failed: {e}")
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text",
+                                    "text": f"✅ 사람 승인 — PR #{pr_number}"}},
+        {"type": "section", "fields": [
+            {"type": "mrkdwn", "text": f"*PR:* <{pr_data['pr_url']}|{pr_data['pr_title']}>"},
+            {"type": "mrkdwn", "text": f"*Approved by:* {actor}"},
+        ]},
+        {"type": "section", "text": {"type": "mrkdwn",
+                                     "text": f"*머지 상태:* {merge_note}"}},
+    ]
+    if note:
+        blocks.append({"type": "section",
+                       "text": {"type": "mrkdwn", "text": f"*메모:*\n{note}"}})
+    blocks.append({"type": "divider"})
+    blocks.append({"type": "context", "elements": [
+        {"type": "mrkdwn",
+         "text": f"🤖 RiskJudge · {datetime.now(timezone.utc).isoformat(timespec='seconds')}"}
+    ]})
+    _post_slack(blocks, f"PR #{pr_number} human-approved by {actor}", slack_token)
+
+    return {"pr_number": pr_number, "status": "accepted", "actor": actor}
+
+
+# ============================================================
+# /rollback — open a revert PR against a previously-merged change
+# ============================================================
+
+def handle_rollback(pr_data: dict) -> dict:
+    """Create a branch that reverts the merge commit of the given PR, then open
+    a new PR. The real CD pipeline re-deploys once the revert PR is merged;
+    we just set the scaffolding up.
+    """
+    pr_number = pr_data["pr_number"]
+    note = pr_data.get("reason", "").strip()
+    actor = pr_data.get("actor", "unknown")
+    github_token = get_secret(GITHUB_TOKEN_SECRET_ARN)
+    slack_token = get_secret(SLACK_TOKEN_SECRET_ARN)
+
+    revert_url = ""
+    revert_note = ""
+
+    merge_sha = pr_data.get("merge_commit_sha") or ""
+    if not merge_sha or not pr_data.get("merged"):
+        revert_note = (
+            f"이 PR은 아직 머지되지 않아 롤백할 커밋이 없습니다. "
+            f"머지된 이후 `/rollback {pr_number}` 를 다시 실행하세요."
+        )
+    else:
+        try:
+            # 1) Look up the parent commit of the merge so the revert branches
+            #    off the same base. Shallow: we just need `parents[0].sha`.
+            commit = _gh(f"/repos/{GITHUB_REPO}/commits/{merge_sha}", github_token)
+            parent_sha = commit["parents"][0]["sha"]
+
+            # 2) Create a branch from the parent. Any write will follow.
+            branch = f"rollback/pr-{pr_number}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            _gh(f"/repos/{GITHUB_REPO}/git/refs", github_token, method="POST",
+                body={"ref": f"refs/heads/{branch}", "sha": parent_sha})
+
+            # 3) Open a PR from branch → main. The branch is already the
+            #    pre-merge state, so merging the PR reverses the change.
+            pr = _gh(f"/repos/{GITHUB_REPO}/pulls", github_token, method="POST",
+                     body={
+                         "title": f"Revert: {pr_data.get('pr_title', '')} (#{pr_number})",
+                         "head": branch, "base": "main",
+                         "body": (
+                             f"## ⏪ Rollback of #{pr_number}\n\n"
+                             f"요청자: `@{actor}`\n\n"
+                             + (f"### 메모\n{note}\n\n" if note else "")
+                             + f"---\n"
+                             f"이 PR은 `/rollback` Slack 명령으로 자동 생성되었습니다. "
+                             f"머지하면 CD 파이프라인이 원상복구 배포를 수행합니다."
+                         ),
+                     })
+            revert_url = pr.get("html_url", "")
+            revert_note = f"롤백 PR 생성 완료 — {revert_url} 머지 시 CD가 재배포합니다."
+        except Exception as e:
+            logger.warning(f"rollback failed: {e}")
+            revert_note = f"롤백 PR 생성 실패 ({type(e).__name__}) — 수동 대응 필요."
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text",
+                                    "text": f"⏪ 롤백 요청 — PR #{pr_number}"}},
+        {"type": "section", "fields": [
+            {"type": "mrkdwn", "text": f"*PR:* <{pr_data['pr_url']}|{pr_data['pr_title']}>"},
+            {"type": "mrkdwn", "text": f"*Requested by:* {actor}"},
+        ]},
+        {"type": "section", "text": {"type": "mrkdwn",
+                                     "text": f"*상태:* {revert_note}"}},
+    ]
+    if revert_url:
+        blocks.append({"type": "section",
+                       "text": {"type": "mrkdwn",
+                                "text": f"*롤백 PR:* <{revert_url}|바로가기>"}})
+    if note:
+        blocks.append({"type": "section",
+                       "text": {"type": "mrkdwn", "text": f"*메모:*\n{note}"}})
+    blocks.append({"type": "divider"})
+    blocks.append({"type": "context", "elements": [
+        {"type": "mrkdwn",
+         "text": f"🤖 DevOpsInvestigator · {datetime.now(timezone.utc).isoformat(timespec='seconds')}"}
+    ]})
+    _post_slack(blocks, f"PR #{pr_number} rollback requested by {actor}", slack_token)
+
+    # Also leave a comment on the original PR so the history is complete.
+    try:
+        comment = (
+            f"## ⏪ Rollback 요청\n\n"
+            f"`@{actor}` 님이 `/rollback` 명령으로 롤백 PR 생성을 요청했습니다.\n\n"
+            + (f"### 메모\n{note}\n\n" if note else "")
+            + (f"롤백 PR: {revert_url}\n\n" if revert_url else "")
+            + f"---\n*Issued via `/rollback` Slack command*"
+        )
+        _post_github_comment(pr_number, comment, github_token)
+    except Exception as e:
+        logger.warning(f"original-PR comment failed: {e}")
+
+    return {"pr_number": pr_number, "status": "rollback_opened",
+            "revert_pr_url": revert_url, "actor": actor}
+
+
+# ============================================================
 # Fallback (Agent unavailable) — minimal direct model call
 # ============================================================
 
@@ -186,14 +326,12 @@ def fallback_direct(pr_data: dict) -> dict:
     github_token = get_secret(GITHUB_TOKEN_SECRET_ARN)
 
     # Fetch diff minimally
-    diff_url = f"https://api.github.com/repos/{GITHUB_REPO}/pulls/{pr_data['pr_number']}"
-    req = urllib.request.Request(diff_url, headers={
-        "Authorization": f"Bearer {github_token}",
-        "Accept": "application/vnd.github.v3.diff",
-        "User-Agent": "AIOps-ChangeManagement",
-    })
-    with urllib.request.urlopen(req) as resp:
-        diff = resp.read().decode()[:10000]
+    diff = _gh(f"/repos/{GITHUB_REPO}/pulls/{pr_data['pr_number']}",
+               github_token, media_type="application/vnd.github.v3.diff")
+    if isinstance(diff, str):
+        diff = diff[:10000]
+    else:
+        diff = ""
 
     prompt = (
         f"PR #{pr_data['pr_number']}: {pr_data['pr_title']}\n"
@@ -249,22 +387,27 @@ def handler(event, context):
     pr_number = event.get("pr_number", "?")
     logger.info(f"Handler invoked: command={command!r}, PR #{pr_number}")
 
-    # --- Slack /reject — skip Agent ---
-    if command == "reject":
-        return handle_reject(event)
+    # --- Slack /accept — human override, no Agent ---
+    if command == "accept":
+        return handle_accept(event)
 
-    # --- Slack /fix — AgentCore Fix pipeline ---
-    if command == "fix":
+    # --- Slack /rollback — revert PR, no Agent ---
+    if command == "rollback":
+        return handle_rollback(event)
+
+    # --- Slack /investigate — AgentCore with DevOpsInvestigator persona ---
+    if command == "investigate":
         if AGENT_RUNTIME_ARN == "none":
-            return {"status": "error", "message": "Fix requires Runtime (AGENT_RUNTIME_ARN=none)"}
+            return {"status": "error",
+                    "message": "investigate requires Runtime (AGENT_RUNTIME_ARN=none)"}
         try:
-            invoke_runtime_for_fix(event)
-            return {"pr_number": pr_number, "status": "fix_completed"}
+            invoke_runtime_for_investigate(event)
+            return {"pr_number": pr_number, "status": "investigation_started"}
         except Exception as e:
-            logger.error(f"Fix pipeline failed: {e}", exc_info=True)
+            logger.error(f"investigate pipeline failed: {e}", exc_info=True)
             return {"status": "error", "message": str(e)}
 
-    # --- Webhook event OR /analysis — full analysis via AgentCore Runtime ---
+    # --- Webhook event (no command) — full analysis via AgentCore Runtime ---
     if AGENT_RUNTIME_ARN != "none":
         try:
             invoke_runtime_for_analysis(event)
