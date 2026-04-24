@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIOps Change Management — AgentCore v3 Architecture</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#0a0e1a;color:#e0e6f0;min-height:100vh;overflow-x:hidden}
+.header{text-align:center;padding:40px 20px 20px;background:linear-gradient(180deg,#111827 0%,#0a0e1a 100%)}
+.header h1{font-size:28px;font-weight:700;color:#fff;margin-bottom:6px}
+.header .sub{font-size:14px;color:#8b95a8;margin-bottom:4px}
+.header .badge{display:inline-block;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;border-radius:12px;padding:2px 12px;font-size:11px;font-weight:600;margin-top:8px}
+.canvas{max-width:1200px;margin:0 auto;padding:30px 20px 60px;position:relative}
+.region{border:2px solid #3b82f644;border-radius:16px;padding:24px;position:relative;background:#111827aa}
+.region-label{position:absolute;top:-13px;left:24px;background:#1e40af;color:#fff;padding:3px 14px;border-radius:8px;font-size:12px;font-weight:600;letter-spacing:.5px}
+.section{border:1px solid #ffffff12;border-radius:12px;padding:18px;margin-bottom:16px;background:#0f172a88}
+.section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:#64748b;margin-bottom:14px}
+.node{border-radius:10px;padding:12px 16px;display:inline-flex;align-items:center;gap:10px;font-size:13px;font-weight:500;position:relative;transition:transform .15s,box-shadow .15s;cursor:default}
+.node:hover{transform:translateY(-2px);box-shadow:0 6px 20px #00000066}
+.node .icon{font-size:20px;flex-shrink:0}
+.node .label{line-height:1.3}
+.node .label small{display:block;font-size:10px;color:#8b95a8;font-weight:400}
+.n-ext{background:#1e293b;border:1px solid #334155;color:#94a3b8}
+.n-gw{background:#1e1b4b;border:1px solid #4338ca55;color:#a5b4fc}
+.n-lambda{background:#7c2d1244;border:1px solid #f9731644;color:#fdba74}
+.n-agent{background:linear-gradient(135deg,#1e3a5f,#0f2942);border:2px solid #3b82f6;color:#93c5fd}
+.n-tool{background:#14532d44;border:1px solid #22c55e44;color:#86efac}
+.n-store{background:#44403c44;border:1px solid #a8a29e44;color:#d6d3d1}
+.n-memory{background:#581c8744;border:1px solid #a855f744;color:#d8b4fe}
+.n-persona{border-radius:10px;padding:14px 18px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:500;cursor:default;transition:transform .15s,box-shadow .15s}
+.n-persona:hover{transform:translateY(-2px);box-shadow:0 6px 24px #00000066}
+.n-persona .icon{font-size:22px}
+.n-persona .label{line-height:1.3}
+.n-persona .label small{display:block;font-size:10px;font-weight:400}
+.p-code{background:linear-gradient(135deg,#1e3a5f,#172554);border:2px solid #3b82f6;color:#93c5fd}
+.p-code .label small{color:#60a5fa88}
+.p-infra{background:linear-gradient(135deg,#134e4a,#0f3d3a);border:2px solid #14b8a6;color:#5eead4}
+.p-infra .label small{color:#14b8a688}
+.p-risk{background:linear-gradient(135deg,#4c1d2e,#3b0f1f);border:2px solid #f43f5e;color:#fda4af}
+.p-risk .label small{color:#f43f5e88}
+.flow-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.arrow{color:#475569;font-size:18px;font-weight:700;flex-shrink:0}
+.arrow-down{text-align:center;color:#475569;font-size:22px;margin:8px 0}
+.tools-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.stores-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.connector{display:flex;align-items:center;justify-content:center;gap:6px;color:#475569;font-size:11px;padding:4px 0}
+.connector .line{flex:1;height:1px;background:#334155}
+.connector .tag{background:#1e293b;border:1px solid #334155;border-radius:6px;padding:2px 10px;font-size:10px;color:#64748b;white-space:nowrap}
+
+/* Orchestration visual */
+.orch-container{position:relative;padding:20px 0}
+.orch-hub{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:0}
+.orch-branches{display:flex;justify-content:center;align-items:flex-start;position:relative;margin-top:0}
+.orch-svg{display:block;margin:0 auto}
+.persona-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;max-width:960px;margin:0 auto}
+.persona-card-wrap{display:flex;flex-direction:column;align-items:center;gap:8px}
+.persona-tasks{font-size:10px;color:#64748b;text-align:center;line-height:1.6;padding:0 8px}
+.persona-tasks span{display:inline-block;background:#1e293b;border:1px solid #334155;border-radius:4px;padding:1px 7px;margin:2px;white-space:nowrap}
+
+/* Merge arrow */
+.merge-section{display:flex;flex-direction:column;align-items:center;gap:0;margin:0}
+.merge-label{font-size:10px;color:#64748b;background:#1e293b;border:1px solid #334155;border-radius:6px;padding:2px 10px;margin-top:4px}
+
+/* Memory side panel */
+.runtime-layout{display:grid;grid-template-columns:1fr 280px;gap:16px;align-items:start}
+.memory-panel{border:1px solid #a855f733;border-radius:10px;padding:14px;background:#1a0a2e66}
+.memory-panel h4{font-size:11px;color:#a855f7;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;font-weight:700}
+.mem-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:11px;color:#d8b4fe}
+.mem-row .mem-icon{font-size:14px}
+.mem-row code{background:#1e293b;padding:1px 5px;border-radius:3px;font-size:10px;color:#a5b4fc}
+.mem-row small{color:#8b95a8;display:block;font-size:10px;margin-top:1px}
+
+.timeline{margin-top:24px;padding:20px;border:1px solid #ffffff0a;border-radius:12px;background:#0f172a66}
+.timeline h3{font-size:14px;color:#94a3b8;margin-bottom:14px;font-weight:600}
+.tl-step{display:flex;gap:14px;margin-bottom:10px;align-items:flex-start}
+.tl-time{font-size:11px;color:#f59e0b;font-weight:600;min-width:48px;padding-top:2px;text-align:right}
+.tl-dot{width:10px;height:10px;border-radius:50%;background:#3b82f6;margin-top:4px;flex-shrink:0;position:relative}
+.tl-dot::after{content:'';position:absolute;left:4px;top:10px;width:2px;height:calc(100% + 10px);background:#1e3a5f}
+.tl-step:last-child .tl-dot::after{display:none}
+.tl-desc{font-size:12px;color:#cbd5e1;line-height:1.5}
+.tl-desc strong{color:#e2e8f0}
+.legend{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-top:30px;padding:16px;border:1px solid #ffffff0a;border-radius:10px;background:#0f172a66}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:11px;color:#8b95a8}
+.legend-dot{width:10px;height:10px;border-radius:3px}
+.footer{text-align:center;padding:30px 20px;color:#475569;font-size:11px}
+/* DevOps Agent */
+.devops-section{border:2px solid #f59e0b44;border-radius:12px;padding:20px;margin-top:20px;background:linear-gradient(135deg,#1a150a cc,#1e1608cc);position:relative}
+.devops-section .section-title{color:#f59e0b}
+.n-devops{background:linear-gradient(135deg,#422006,#351c05);border:2px solid #f59e0b;color:#fcd34d}
+.n-devops .label small{color:#f59e0b88}
+.devops-flow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;margin:12px 0}
+.devops-sources{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:12px}
+.n-obs{background:#1e293b;border:1px solid #f59e0b44;color:#fcd34d}
+.webhook-badge{display:inline-block;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:600;margin-left:6px;vertical-align:middle}
+
+@media(max-width:768px){
+  .persona-cards{grid-template-columns:1fr}
+  .runtime-layout{grid-template-columns:1fr}
+  .stores-grid{grid-template-columns:1fr}
+  .tools-grid{grid-template-columns:1fr}
+  .flow-row{flex-direction:column}
+  .arrow{transform:rotate(90deg)}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🤖 AIOps Change Management System</h1>
+  <div class="sub">Architecture v3 — Amazon Bedrock AgentCore 기반</div>
+  <div class="badge">DRAFT — 리뷰용 설계안</div>
+</div>
+
+<div class="canvas">
+  <div class="region">
+    <div class="region-label">☁️ us-east-1 (Virginia) — 전 리소스 단일 리전</div>
+
+    <!-- External Sources -->
+    <div class="section">
+      <div class="section-title">External Sources</div>
+      <div class="flow-row" style="justify-content:space-between">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div class="node n-ext"><span class="icon">🐙</span><span class="label">GitHub<small>PR Webhook</small></span></div>
+          <div class="arrow">→</div>
+          <div class="node n-gw"><span class="icon">🌐</span><span class="label">API Gateway<small>/webhook</small></span></div>
+          <div class="arrow">→</div>
+          <div class="node n-lambda"><span class="icon">⚡</span><span class="label">webhook Lambda<small>HMAC 검증</small></span></div>
+        </div>
+        <div class="node" style="border:1.5px solid #a855f7;background:#581c8733;color:#d8b4fe;padding:10px 14px">
+          <span class="icon" style="font-size:16px">🔮</span>
+          <span class="label"><span style="font-size:12px">Security Agent</span><small style="color:#a855f788">향후 연동 예정 (stub)</small></span>
+        </div>
+      </div>
+      <div class="flow-row">
+        <div class="node n-ext"><span class="icon">💬</span><span class="label">Slack<small>Slash Commands</small></span></div>
+        <div class="arrow">→</div>
+        <div class="node n-gw"><span class="icon">🌐</span><span class="label">API Gateway<small>/slack/commands</small></span></div>
+        <div class="arrow">→</div>
+        <div class="node n-lambda"><span class="icon">⚡</span><span class="label">slack-command Lambda<small>명령 파싱</small></span></div>
+      </div>
+      </div>
+    </div>
+
+    <div class="arrow-down">▼ async invoke</div>
+
+    <div class="section" style="text-align:center">
+      <div class="node n-lambda" style="display:inline-flex"><span class="icon">🔀</span><span class="label">analysis Lambda<small>Bridge — InvokeAgentRuntime 호출</small></span></div>
+    </div>
+
+    <div class="arrow-down">▼ InvokeAgentRuntime</div>
+
+    <!-- AgentCore Runtime with Persona Orchestration -->
+    <div class="section" style="border-color:#3b82f644;background:linear-gradient(135deg,#0f172acc,#1e293bcc)">
+      <div class="section-title" style="color:#60a5fa">🧠 Amazon Bedrock AgentCore Runtime</div>
+
+      <div class="runtime-layout">
+        <div class="orch-container">
+          <!-- Strands Agent Hub -->
+          <div class="orch-hub">
+            <div class="node n-agent" style="padding:14px 28px">
+              <span class="icon">🤖</span>
+              <span class="label">Strands Agent<small>Claude Sonnet 4.x · Python ZIP (S3) · 프롬프트 기반 오케스트레이터</small></span>
+            </div>
+          </div>
+
+          <!-- Branch SVG -->
+          <svg class="orch-svg" width="900" height="60" viewBox="0 0 900 60">
+            <line x1="450" y1="0" x2="450" y2="15" stroke="#3b82f6" stroke-width="2"/>
+            <line x1="112" y1="15" x2="788" y2="15" stroke="#3b82f6" stroke-width="2"/>
+            <!-- code -->
+            <line x1="112" y1="15" x2="112" y2="40" stroke="#3b82f6" stroke-width="2"/>
+            <polygon points="107,38 117,38 112,48" fill="#3b82f6"/>
+            <!-- infra -->
+            <line x1="338" y1="15" x2="338" y2="40" stroke="#14b8a6" stroke-width="2"/>
+            <polygon points="333,38 343,38 338,48" fill="#14b8a6"/>
+            <!-- risk -->
+            <line x1="562" y1="15" x2="562" y2="40" stroke="#f43f5e" stroke-width="2"/>
+            <polygon points="557,38 567,38 562,48" fill="#f43f5e"/>
+            <!-- devops -->
+            <line x1="788" y1="15" x2="788" y2="40" stroke="#f59e0b" stroke-width="2"/>
+            <polygon points="783,38 793,38 788,48" fill="#f59e0b"/>
+            <text x="112" y="58" text-anchor="middle" fill="#64748b" font-size="9" font-family="system-ui">detect: code</text>
+            <text x="338" y="58" text-anchor="middle" fill="#64748b" font-size="9" font-family="system-ui">detect: infra</text>
+            <text x="562" y="58" text-anchor="middle" fill="#64748b" font-size="9" font-family="system-ui">detect: all</text>
+            <text x="788" y="58" text-anchor="middle" fill="#f59e0b88" font-size="9" font-family="system-ui">incident 조사</text>
+          </svg>
+
+          <!-- 3 Persona Cards -->
+          <div class="persona-cards">
+            <div class="persona-card-wrap">
+              <div class="n-persona p-code" style="width:100%">
+                <span class="icon">💻</span>
+                <span class="label">Code Reviewer<small>코드 품질 · 로직 분석</small></span>
+              </div>
+              <div class="persona-tasks">
+                <span>코드 스타일</span>
+                <span>버그 패턴</span>
+                <span>복잡도 분석</span>
+                <span>테스트 커버리지</span>
+                <span>개발자 프로필 참조</span>
+              </div>
+            </div>
+            <div class="persona-card-wrap">
+              <div class="n-persona p-infra" style="width:100%">
+                <span class="icon">🏗️</span>
+                <span class="label">Infra Reviewer<small>인프라 변경 · IaC 분석</small></span>
+              </div>
+              <div class="persona-tasks">
+                <span>CFN/SAM 검증</span>
+                <span>IAM 권한 분석</span>
+                <span>리소스 설정</span>
+                <span>비용 영향</span>
+                <span>KB 베스트프랙티스</span>
+              </div>
+            </div>
+            <div class="persona-card-wrap">
+              <div class="n-persona p-risk" style="width:100%">
+                <span class="icon">🛡️</span>
+                <span class="label">Risk Reviewer<small>보안 · 위험 평가</small></span>
+              </div>
+              <div class="persona-tasks">
+                <span>보안 취약점</span>
+                <span>시크릿 노출</span>
+                <span>의존성 위험</span>
+                <span>컴플라이언스</span>
+                <span>과거 이슈 패턴</span>
+              </div>
+            </div>
+            <div class="persona-card-wrap">
+              <div class="n-persona" style="width:100%;background:linear-gradient(135deg,#422006,#351c05);border:2px solid #f59e0b;color:#fcd34d">
+                <span class="icon">🔥</span>
+                <span class="label">DevOps Agent<small>장애 조사 · 인시던트 RCA</small></span>
+              </div>
+              <div class="persona-tasks">
+                <span>CloudWatch 로그/메트릭</span>
+                <span>X-Ray 트레이스</span>
+                <span>CloudTrail 변경이력</span>
+                <span>근본원인 추론</span>
+                <span>변경↔장애 상관분석</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Merge -->
+          <svg class="orch-svg" width="900" height="40" viewBox="0 0 900 40">
+            <line x1="112" y1="0" x2="112" y2="15" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="338" y1="0" x2="338" y2="15" stroke="#14b8a6" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="562" y1="0" x2="562" y2="15" stroke="#f43f5e" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="788" y1="0" x2="788" y2="15" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4"/>
+            <line x1="112" y1="15" x2="788" y2="15" stroke="#64748b" stroke-width="1.5"/>
+            <line x1="450" y1="15" x2="450" y2="35" stroke="#64748b" stroke-width="1.5"/>
+            <polygon points="445,33 455,33 450,40" fill="#64748b"/>
+          </svg>
+          <div class="merge-section">
+            <div class="merge-label">결과 병합 → GitHub Comment + Slack Report</div>
+          </div>
+        </div>
+
+        <!-- Memory Side Panel -->
+        <div class="memory-panel">
+          <h4>🧠 AgentCore Memory</h4>
+          <div class="mem-row">
+            <span class="mem-icon">⚡</span>
+            <div>
+              <strong>단기 (Session)</strong>
+              <code>pr-{repo}-{number}</code>
+              <small>현재 PR 분석의 원시 대화 로그</small>
+            </div>
+          </div>
+          <div class="mem-row">
+            <span class="mem-icon">📖</span>
+            <div>
+              <strong>장기 — 요약</strong>
+              <code>SUMMARY · actorId=repo</code>
+              <small>같은 레포의 과거 PR 요약 누적</small>
+            </div>
+          </div>
+          <div class="mem-row">
+            <span class="mem-icon">👤</span>
+            <div>
+              <strong>장기 — 선호</strong>
+              <code>USER_PREFERENCES</code>
+              <small>개발자별 반복 패턴/약점</small>
+            </div>
+          </div>
+          <hr style="border:0;border-top:1px solid #a855f722;margin:12px 0">
+          <div style="font-size:10px;color:#8b95a8;line-height:1.5">
+            Memory SDK로 Runtime에서 직접 호출.<br>
+            세션 간 컨텍스트 유지로 리뷰 품질 향상.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MCP Connection -->
+    <div class="connector">
+      <div class="line"></div>
+      <div class="tag">MCP Protocol</div>
+      <div class="line"></div>
+    </div>
+
+    <!-- Gateway + Tools -->
+    <div class="section">
+      <div class="section-title">AgentCore Gateway → Tool Lambdas (MCP Endpoint)</div>
+      <div class="tools-grid">
+        <div class="node n-tool"><span class="icon">🔧</span><span class="label">pr_tools<small>get_pr_diff · get_pr_files · detect_change_type · post_github_comment</small></span></div>
+        <div class="node n-tool"><span class="icon">📚</span><span class="label">kb_tools<small>query_knowledge_base</small></span></div>
+        <div class="node n-tool"><span class="icon">🗄️</span><span class="label">ddb_tools<small>get_review_history · get_developer_profile</small></span></div>
+        <div class="node n-tool"><span class="icon">📢</span><span class="label">slack_tools<small>post_slack_report</small></span></div>
+        <div class="node n-tool"><span class="icon">🤝</span><span class="label">subagent_tools<small>invoke_devops_agent ✅ · invoke_security_agent (stub)</small></span></div>
+      </div>
+    </div>
+
+    <div class="arrow-down">▼</div>
+
+    <!-- Data Stores -->
+    <div class="section">
+      <div class="section-title">Data Stores</div>
+      <div class="stores-grid">
+        <div class="node n-store" style="width:100%"><span class="icon">📊</span><span class="label">DynamoDB (3 Tables)<small>review-history · dev-profiles · team-stats</small></span></div>
+        <div class="node n-store" style="width:100%"><span class="icon">🔍</span><span class="label">Bedrock Knowledge Base<small>S3 Vectors + Titan Embed v2</small></span></div>
+        <div class="node n-store" style="width:100%"><span class="icon">🔐</span><span class="label">Secrets Manager<small>GitHub Token · Slack Token</small></span></div>
+      </div>
+      <div style="margin-top:12px;text-align:center">
+        <div class="node n-store" style="display:inline-flex"><span class="icon">📦</span><span class="label">S3 kb-data Bucket<small>→ kb-reindex Lambda (StartIngestionJob)</small></span></div>
+      </div>
+    </div>
+
+    <!-- Identity -->
+    <div class="section" style="text-align:center;padding:10px 18px">
+      <div class="node n-gw" style="display:inline-flex"><span class="icon">🛡️</span><span class="label">Identity: WorkloadIdentity Only<small>OAuth Provider 미사용 — IAM SigV4 인증</small></span></div>
+    </div>
+
+  </div>
+
+  <!-- Request Flow Timeline -->
+  <div class="timeline">
+    <h3>📋 요청 처리 흐름 (Webhook 경로)</h3>
+    <div class="tl-step">
+      <div class="tl-time">T+0.0</div>
+      <div class="tl-dot"></div>
+      <div class="tl-desc"><strong>GitHub PR Opened</strong> — PR 생성 이벤트 발생</div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-time">T+0.1</div>
+      <div class="tl-dot"></div>
+      <div class="tl-desc"><strong>webhook Lambda</strong> — HMAC 검증 → analysis Lambda 비동기 호출</div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-time">T+0.5</div>
+      <div class="tl-dot"></div>
+      <div class="tl-desc"><strong>analysis Lambda</strong> — InvokeAgentRuntime 호출 (runtimeSessionId 생성)</div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-time">T+1.0</div>
+      <div class="tl-dot" style="background:#3b82f6"></div>
+      <div class="tl-desc"><strong>Strands Agent 시작</strong> — Memory에서 과거 PR 요약 로드 → <code style="background:#1e293b;padding:1px 5px;border-radius:3px;font-size:11px;color:#60a5fa">detect_change_type</code> 호출</div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-time">T+2.0</div>
+      <div class="tl-dot" style="background:#14b8a6"></div>
+      <div class="tl-desc"><strong>Persona 분기</strong> — 변경 유형에 따라 Code / Infra / Risk Persona 활성화 (프롬프트 스위칭)</div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-time">T+3~20</div>
+      <div class="tl-dot" style="background:#f59e0b"></div>
+      <div class="tl-desc"><strong>분석 수행</strong> — KB 조회 + 리뷰 이력 + 개발자 프로필 참조 → 각 Persona별 리뷰 생성</div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-time">T+25</div>
+      <div class="tl-dot"></div>
+      <div class="tl-desc"><strong>결과 병합 및 반환</strong> — GitHub Comment 게시 + Slack Report 전송 + Memory 기록 (단기+장기)</div>
+    </div>
+  </div>
+
+  <!-- Incident Flow Timeline -->
+  <div class="timeline" style="border-color:#f59e0b22">
+    <h3>🚨 인시던트 조사 흐름 (Webhook 또는 Strands Agent 위임)</h3>
+    <div class="tl-step">
+      <div class="tl-time">트리거</div>
+      <div class="tl-dot" style="background:#f59e0b"></div>
+      <div class="tl-desc"><strong>Slack 커맨드로 인시던트 조사 요청</strong> — Strands Agent가 DevOps Agent Persona 활성화</div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-time">T+0~2</div>
+      <div class="tl-dot" style="background:#f59e0b"></div>
+      <div class="tl-desc"><strong>Triage</strong> — 알람 분석, 영향 범위 파악, 최근 배포 변경사항과 상관분석</div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-time">T+2~15</div>
+      <div class="tl-dot" style="background:#f59e0b"></div>
+      <div class="tl-desc"><strong>Investigate</strong> — CloudWatch 로그/메트릭 조회, X-Ray 트레이스 분석, CloudTrail 변경 이력 확인 → 근본 원인 추론</div>
+    </div>
+    <div class="tl-step">
+      <div class="tl-time">T+15~20</div>
+      <div class="tl-dot" style="background:#f59e0b"></div>
+      <div class="tl-desc"><strong>Report</strong> — 인시던트 타임라인 정리 + RCA 리포트 생성 + Slack 알림 + Memory에 장애 패턴 기록</div>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#334155"></div>External</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4338ca"></div>API Gateway</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div>Lambda</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Strands Agent</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6;border:2px solid #93c5fd"></div>Code Persona</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#14b8a6"></div>Infra Persona</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f43f5e"></div>Risk Persona</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div>Memory</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>DevOps Agent</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>Tool Lambda</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a8a29e"></div>Data Store</div>
+  </div>
+</div>
+
+<div class="footer">
+  AIOps Change Management — Architecture v3 (AgentCore) · DRAFT · Generated 2026-04-24
+</div>
+
+</body>
+</html>
